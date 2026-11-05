@@ -1,0 +1,36 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# SQLite local database files
+*.sqlite3
+*.db
+campusbite.db
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+
+# Node & Frontend dependencies
+node_modules/
+frontend/node_modules/
+dist/
+build/
+*.log
+# Pytest cache
+.pytest_cache/

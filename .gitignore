@@ -34,3 +34,6 @@ build/
 *.log
 # Pytest cache
 .pytest_cache/
+
+*.db-shm
+*.db-wal

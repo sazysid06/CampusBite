@@ -26,6 +26,14 @@ class OrderStatus(str, enum.Enum):
     CANCELLED = "cancelled"
     REFUNDED = "refunded"
 
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
+
 
 class DeliveryStatus(str, enum.Enum):
     UNASSIGNED = "unassigned"
@@ -34,17 +42,41 @@ class DeliveryStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
+
 
 class PaymentStatus(str, enum.Enum):
     MOCK_PAID = "mock_paid"
     REFUNDED = "refunded"
     FAILED = "failed"
 
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
+
 
 class RefundStatus(str, enum.Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
 
 
 class Order(Base):

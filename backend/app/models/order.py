@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import enum
 from typing import List, Optional
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     Float,
@@ -15,12 +16,15 @@ from backend.app.core.database import Base
 
 
 class OrderStatus(str, enum.Enum):
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
+    PLACED = "placed"
+    ACCEPTED = "accepted"
     PREPARING = "preparing"
+    READY = "ready"
+    ASSIGNED = "assigned"
     OUT_FOR_DELIVERY = "out_for_delivery"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    REFUNDED = "refunded"
 
 
 class DeliveryStatus(str, enum.Enum):
@@ -29,6 +33,18 @@ class DeliveryStatus(str, enum.Enum):
     PICKED_UP = "picked_up"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class PaymentStatus(str, enum.Enum):
+    MOCK_PAID = "mock_paid"
+    REFUNDED = "refunded"
+    FAILED = "failed"
+
+
+class RefundStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class Order(Base):
@@ -47,8 +63,8 @@ class Order(Base):
     )
     total_amount: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[OrderStatus] = mapped_column(
-        Enum(OrderStatus),
-        default=OrderStatus.PENDING,
+        Enum(OrderStatus, values_callable=lambda x: [e.value for e in x]),
+        default=OrderStatus.PLACED,
         nullable=False,
         index=True,
     )
@@ -76,6 +92,24 @@ class Order(Base):
     )
     delivery: Mapped[Optional["Delivery"]] = relationship(
         "Delivery",
+        back_populates="order",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    payment: Mapped[Optional["Payment"]] = relationship(
+        "Payment",
+        back_populates="order",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    refund_request: Mapped[Optional["RefundRequest"]] = relationship(
+        "RefundRequest",
+        back_populates="order",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    review: Mapped[Optional["Review"]] = relationship(
+        "Review",
         back_populates="order",
         uselist=False,
         cascade="all, delete-orphan",
@@ -120,7 +154,7 @@ class Delivery(Base):
         index=True,
     )
     status: Mapped[DeliveryStatus] = mapped_column(
-        Enum(DeliveryStatus),
+        Enum(DeliveryStatus, values_callable=lambda x: [e.value for e in x]),
         default=DeliveryStatus.UNASSIGNED,
         nullable=False,
         index=True,
@@ -146,3 +180,105 @@ class Delivery(Base):
     # Relationships
     order: Mapped["Order"] = relationship("Order", back_populates="delivery")
     delivery_partner = relationship("User", foreign_keys=[delivery_partner_id])
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[PaymentStatus] = mapped_column(
+        Enum(PaymentStatus, values_callable=lambda x: [e.value for e in x]),
+        default=PaymentStatus.MOCK_PAID,
+        nullable=False,
+    )
+    transaction_reference: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    order: Mapped["Order"] = relationship("Order", back_populates="payment")
+
+
+class RefundRequest(Base):
+    __tablename__ = "refund_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[RefundStatus] = mapped_column(
+        Enum(RefundStatus, values_callable=lambda x: [e.value for e in x]),
+        default=RefundStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    decision_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    order: Mapped["Order"] = relationship("Order", back_populates="refund_request")
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    restaurant_id: Mapped[int] = mapped_column(
+        ForeignKey("restaurants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("rating >= 1 AND rating <= 5", name="check_valid_rating"),
+    )
+
+    order: Mapped["Order"] = relationship("Order", back_populates="review")
+    restaurant = relationship("Restaurant", backref="reviews")
+    customer = relationship("User", backref="reviews")

@@ -1,206 +1,263 @@
-﻿# 🍔 CampusBite — Smart Campus Food Ordering & Delivery Platform
+# CampusBite
 
-CampusBite is a full-stack campus food delivery and dining service built with **React**, **FastAPI**, **SQLAlchemy (Async)**, **SQLite**, Google Gemini, and OpenAI. It supports customer, restaurant-owner, and delivery-partner workflows, order lifecycle management, analytics, and an AI advisor grounded in the authenticated customer's order history.
+CampusBite is a campus food ordering and delivery application. It combines a React frontend, a FastAPI REST API, and a SQLite database to support customers, restaurant owners, and delivery partners.
 
----
+## What’s implemented
 
-## 🚀 Key Features
+- **Authentication and roles:** registration, JWT login, persisted frontend sessions, protected routes, and role-based pages for customers, restaurant owners, and delivery partners.
+- **Restaurant discovery:** browse open restaurants, search the list, view restaurant details, and see available menu items.
+- **Cart and checkout:** add menu items to a single-restaurant cart, adjust quantities, retain the cart in browser storage, and submit an order.
+- **Order workflow:** customers can view their orders and cancel eligible orders; restaurant owners can advance orders through kitchen statuses; assigned delivery partners can update delivery status.
+- **Owner workspace:** create a restaurant, add menu items, view incoming orders, and see backend-provided restaurant analytics.
+- **Customer dashboard:** order history and spending insights, plus an AI advisor for questions about the signed-in customer’s own order history.
+- **Private AI advisor:** order details are queried using the authenticated customer ID. The backend sends relevant order summaries and aggregates—not delivery addresses—to the AI provider. OpenAI is preferred when configured; Gemini is used as a fallback. The advisor is limited to 10 requests per customer per minute per backend process.
+- **Responsive interface:** shared navigation, loading/error/empty states, and layouts for mobile and desktop.
+- **Docker deployment:** Compose runs the backend and a production-built React frontend. Nginx serves the frontend, supports React Router deep links, and proxies API requests to the backend.
 
-### 1. Robust Authentication & RBAC
-- JWT-based authentication (\python-jose\) with secure password hashing (\passlib[argon2]\).
-- Fine-grained Role-Based Access Control (RBAC):
-  - **Customer / Student:** Browse menus, place orders, track status, submit reviews, request refunds, view AI insights.
-  - **Restaurant Owner:** Manage menus, update order statuses (\ccepted\ ➔ \preparing\ ➔ \
-eady\), assign riders, view revenue analytics, monitor stale orders.
-  - **Delivery Partner / Rider:** Accept assignments, mark orders \out_for_delivery\ and \delivered\.
-  - **Admin:** System-wide management and operational oversight.
+## Technology
 
-### 2. Strict 7-Stage Order Lifecycle State Machine
-Orders enforce atomic database transactions and strict state transitions:
-\\\	ext
-[placed] ➡️ [accepted] ➡️ [preparing] ➡️ [ready] ➡️ [assigned] ➡️ [out_for_delivery] ➡️ [delivered]
-   │             │
-   └─────────────┴──────────> [cancelled] (Customer can cancel only prior to preparation)
-\\\
-- **Guarded Transitions:** Unauthorized role transitions (e.g., owner attempting delivery status updates, customer cancelling mid-preparation) are rejected with clear HTTP 400/403 exceptions.
-- **Delivery Integration:** Dynamic assignment of riders with automatic tracking of \pickup_time\ and \delivered_time\.
-- **Mock Payment Engine:** Automatic generation of payment records and unique transaction references on order submission.
-
-### 3. Post-Delivery Operations & Governance
-- **Reviews & Ratings:** Customers can rate completed orders (1–5 scale with \CheckConstraint\ validation) with optional feedback.
-- **Dispute & Refund Workflow:** Formal refund requests for fulfilled orders with owner review and decision tracking (\pproved\ / \
-ejected\).
-
-### 4. Operations, Analytics & Stale Order Engine
-- **Restaurant Performance Analytics:** Real-time computation of \	otal_orders\, \	otal_revenue\, \completed_orders\, \cancelled_orders\, and \
-efunded_orders\.
-- **Timezone-Resilient Stale Order Reminders:** Active query engine that catches stagnant orders exceeding operational thresholds with UTC offset normalization.
-
-### 5. Gemini AI Meal & Spending Advisor
-- Integrated with Google Gemini models via \google-genai\.
-- Analyzes past ordering patterns, spend velocity, and dietary preferences to deliver concise nutritional summaries and actionable dining suggestions.
-
-### 6. Private OpenAI Order-History Advisor
-- Customers can ask natural-language questions about their own orders, spending this week, delivery status, and frequently ordered items.
-- The backend scopes every history query to the authenticated customer and sends only order summaries and aggregates to OpenAI (not delivery addresses or account credentials).
-- OpenAI is used when `OPENAI_API_KEY` is configured; otherwise the same private order context is sent to Gemini when `GEMINI_API_KEY` is configured.
-- Configure `OPENAI_API_KEY` and optionally `OPENAI_MODEL` in the backend environment. The endpoint limits each customer to 10 requests per minute and reports upstream timeouts and rate limits.
-
----
-
-## 🛠️ Technology Stack
-
-| Layer | Technologies |
+| Area | Stack |
 |---|---|
-| **Framework** | FastAPI (Python 3.14+) |
-| **Server** | Uvicorn (ASGI) |
-| **ORM & Database** | SQLAlchemy 2.0 (Async), Alembic, SQLite |
-| **Data Validation** | Pydantic V2 (\ConfigDict\, \model_config\) |
-| **Security** | OAuth2 Password Bearer, JWT (\python-jose\), Argon2 (\passlib\) |
-| **AI Integration** | Google Gemini AI (\google-genai\) |
-| **Testing** | Pytest, Pytest-Asyncio, HTTPX (ASGITransport) |
+| Frontend | React, Vite, React Router, Axios |
+| Backend | Python 3.12 container, FastAPI, Uvicorn, Pydantic |
+| Data | SQLAlchemy async, SQLite, Alembic |
+| Authentication | JWT bearer tokens, Argon2 password hashing |
+| AI | OpenAI Chat Completions with Gemini fallback; Gemini menu recommendations |
+| Tests | Pytest, pytest-asyncio, HTTPX |
+| Containers | Docker, Docker Compose, Nginx |
 
----
+## Repository layout
 
-## 📁 Project Architecture
-
-\\\	ext
+```text
 CampusBite/
 ├── backend/
-│   └── app/
-│       ├── api/
-│       │   ├── deps.py              # Auth & database dependency injections
-│       │   └── v1/
-│       │       ├── auth.py          # Registration & JWT token issuance
-│       │       ├── orders.py        # Lifecycle, analytics, reviews & AI routes
-│       │       └── restaurant.py    # Restaurant & menu management
-│       ├── core/
-│       │   ├── config.py            # Pydantic settings & env configurations
-│       │   ├── database.py          # Async engine & session setup
-│       │   └── security.py          # Password hashing & JWT generation
-│       ├── models/
-│       │   ├── order.py             # Order, Delivery, Payment, Refund, Review models
-│       │   ├── restaurant.py        # Restaurant & MenuItem models
-│       │   └── user.py              # User & Role models
-│       ├── schemas/
-│       │   ├── order.py             # Pydantic V2 schemas for order operations
-│       │   ├── restaurant.py        # Restaurant/menu request/response schemas
-│       │   └── user.py              # User & Token schemas
-│       ├── services/
-│       │   └── ai_advisor.py        # Gemini AI meal analytics integration
-│       └── main.py                  # FastAPI application entrypoint
-├── tests/
-│   ├── conftest.py                  # Test database fixtures, tokens & mocks
-│   ├── test_lifecycle.py            # State machine & RBAC boundary tests
-│   └── test_operations.py           # Reviews, refunds, analytics & AI test suite
-├── pytest.ini                       # Pytest configuration
-├── requirements.txt                 # Project dependencies
-└── README.md                        # Documentation
-\\\
-
----
-
-## ⚙️ Installation & Setup
-
-### 1. Prerequisites
-- Python 3.10+ (Tested on Python 3.14)
-- Git
-
-### 2. Clone Repository & Setup Environment
-\\\powershell
-# Clone the repository
-git clone https://github.com/sazysid06/CampusBite.git
-cd CampusBite
-
-# Create and activate virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# Install dependencies
-pip install -r requirements.txt
-\\\
-
-### 3. Environment Variables
-Create a \.env\ file in the project root:
-\\\env
-PROJECT_NAME="CampusBite"
-SECRET_KEY="your-secure-secret-key"
-ALGORITHM="HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-DATABASE_URL="sqlite+aiosqlite:///./campusbite.db"
-GEMINI_API_KEY="your-gemini-api-key"
-OPENAI_API_KEY="your-openai-api-key"
-OPENAI_MODEL="gpt-4o-mini"
-\\\
-
----
-
-## 🏃 Running the Application
-
-Start the development server with live reload:
-\\\powershell
-uvicorn backend.app.main:app --reload
-\\\
-- **Interactive Swagger Documentation:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- **ReDoc Alternative Documentation:** [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
-
----
-
-## 🧪 Running Automated Tests
-
-Run the complete test suite covering the 7-stage lifecycle, role restrictions, reviews, refunds, and AI insights:
-\\\powershell
-pytest -v
-\\\
-
----
-
-## 📖 Primary API Endpoints
-
-### 🔐 Authentication (\/api/v1/auth\)
-- \POST /register\ — Register a customer, owner, or delivery partner
-- \POST /login\ — Authenticate and receive a Bearer JWT token
-
-### 📦 Orders & Delivery (\/api/v1/orders\)
-- \POST /\ — Place a new order with atomic price computation and mock payment
-- \GET /{order_id}\ — Retrieve order details including items, delivery status, and review
-- \PATCH /{order_id}/status\ — Advance order state (\ccepted\, \preparing\, \
-eady\, \out_for_delivery\, \delivered\, \cancelled\)
-- \POST /{order_id}/assign-rider\ — Assign an available delivery partner to an order
-- \POST /{order_id}/review\ — Submit rating and feedback for delivered orders
-- \POST /{order_id}/refund\ — Request an order refund
-- \PATCH /{order_id}/refund-decision\ — Approve or reject pending refund requests (Owner/Admin)
-- \GET /restaurant/analytics\ — Fetch revenue and order completion metrics
-- \GET /stale-reminders\ — Identify active orders lagging past threshold durations
-- \GET /insights/summary\ — Generate Gemini AI customer order analysis and meal recommendations
-- \POST /orders/advisor\ — Answer a customer's question using only that authenticated customer's order history (OpenAI)
-
----
-## Docker Setup & Local Execution
-
-CampusBite runs as two Docker Compose services: the FastAPI backend and the production React frontend. Nginx serves the frontend on port 3000 and proxies `/api/` requests to the backend container, so browser requests work without pointing at `localhost` from inside Docker.
-
-### Quickstart
-
-1. Create the root `.env` file with the backend settings. Set `DATABASE_URL=sqlite+aiosqlite:////app/data/campusbite.db`.
-   To enable the order-history advisor, set `OPENAI_API_KEY` in this backend `.env` file. After changing it, apply the value with `docker compose up -d --force-recreate backend`. Do not put the key in frontend variables.
-2. Build and start both services:
-   ```sh
-   docker compose up --build
-   ```
-3. Open the frontend at [http://localhost:3000](http://localhost:3000). The API is available at [http://localhost:8000](http://localhost:8000).
-
-The frontend image uses a multi-stage build: Node builds the React/Vite bundle, then Nginx serves it and proxies API requests to `backend:8000`. React Router deep links fall back to `index.html`. The frontend API base is set to `/api/v1` at image-build time.
-
-Optional backend commands:
-
-```sh
-docker compose exec backend python -m backend.scripts.seed
-docker compose exec backend pytest -v
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── deps.py                 # Authentication and role dependencies
+│   │   │   └── v1/
+│   │   │       ├── auth.py             # Registration, login, current profile
+│   │   │       ├── orders.py           # Orders, workflow, analytics, AI advisor
+│   │   │       ├── recommendations.py  # Gemini menu recommendations
+│   │   │       └── restaurants.py      # Restaurants and menu API
+│   │   ├── core/
+│   │   │   ├── config.py               # Environment-backed settings
+│   │   │   ├── database.py             # Async database engine and sessions
+│   │   │   └── security.py             # Password hashing and JWT helpers
+│   │   ├── models/                     # User, restaurant, menu, and order models
+│   │   ├── schemas/                    # API request and response schemas
+│   │   ├── services/ai/
+│   │   │   ├── advisor.py              # Gemini menu advisor
+│   │   │   └── order_history_advisor.py # OpenAI/Gemini order-history advisor
+│   │   └── main.py                     # FastAPI app and health endpoint
+│   └── scripts/seed.py                 # Optional demo data
+├── frontend/
+│   ├── src/
+│   │   ├── components/                 # Shared UI and protected routing
+│   │   ├── context/                    # Authentication and cart state
+│   │   ├── pages/                      # Auth, customer, owner, and rider pages
+│   │   └── services/                   # Axios API clients
+│   ├── Dockerfile                      # Vite build + Nginx runtime image
+│   └── nginx.conf                      # SPA fallback and backend API proxy
+├── tests/                              # API workflow and advisor tests
+├── Dockerfile                          # Backend image
+├── docker-compose.yml                  # Backend and frontend services
+├── requirements.txt
+└── README.md
 ```
 
-Stop services while preserving the database with `docker compose down`. To remove the SQLite data volume as well, run `docker compose down -v`.
+## Run with Docker Compose
 
+Docker is the simplest way to run the full application.
 
-## 📜 License
-This project is open-source and available under the [MIT License](LICENSE).
+1. Copy the example environment file at the repository root:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. Edit `.env`. Replace the JWT secret with a strong random value. Add at least one AI key (`GEMINI_API_KEY` or `OPENAI_API_KEY`) to enable the order-history advisor. Keep secrets in the backend `.env`; do not put them in frontend variables.
+
+   Compose uses the persistent SQLite volume with:
+
+   ```env
+   DATABASE_URL=sqlite+aiosqlite:////app/data/campusbite.db
+   ```
+
+3. Build and start both services:
+
+   ```powershell
+   docker compose up --build -d
+   ```
+
+4. Open:
+
+   - Frontend: [http://localhost:3000](http://localhost:3000)
+   - API health: [http://localhost:8000/health](http://localhost:8000/health)
+   - Interactive API docs (when `DEBUG=True`): [http://localhost:8000/docs](http://localhost:8000/docs)
+
+The frontend container builds the Vite app with Node and serves the static production files through Nginx. Requests to `/api/` are proxied to `backend:8000` on the Compose network. React Router routes such as `/restaurants` therefore work when opened directly.
+
+Useful Compose commands:
+
+```powershell
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose exec backend python -m backend.scripts.seed
+docker compose exec backend pytest -v
+docker compose down
+```
+
+The seed command inserts demo users, one restaurant, and menu items if the demo customer is not already present. The SQLite database is stored in the `sqlite_data` named volume and survives `docker compose down`. To remove that volume and its data, use `docker compose down -v`.
+
+## Run locally without Docker
+
+### Backend
+
+Use Python 3.12 or newer supported by the project dependencies.
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+For a local SQLite file rather than the Docker data path, set this in `.env`:
+
+```env
+DATABASE_URL=sqlite+aiosqlite:///./campusbite.db
+```
+
+Run the API from the repository root:
+
+```powershell
+uvicorn backend.app.main:app --reload
+```
+
+The backend listens on port `8000`.
+
+### Frontend
+
+In another terminal:
+
+```powershell
+Set-Location frontend
+npm ci
+```
+
+Create `frontend/.env.local` with the local backend URL:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+Start the development server:
+
+```powershell
+npm run dev
+```
+
+Vite prints the frontend URL (normally [http://localhost:5173](http://localhost:5173)). Do not use the Docker-only relative `/api/v1` URL for the Vite dev server unless a Vite proxy is configured.
+
+## Frontend pages
+
+| Route | Role | Purpose |
+|---|---|---|
+| `/login` | Public | Sign in |
+| `/register` | Public | Create an account and choose a role |
+| `/restaurants` | Customer | Search and browse open restaurants |
+| `/restaurants/:restaurantId` | Customer | Restaurant details and menu |
+| `/cart` | Customer | Review cart and submit an order |
+| `/dashboard` | Customer | Order history, insights, and order-history AI advisor |
+| `/owner/dashboard` | Restaurant owner | Set up restaurant, add menu items, manage orders, view analytics |
+| `/rider/dashboard` | Delivery partner | View assigned orders and update delivery status |
+
+Routes are protected by authentication and role. JWTs are stored in browser `localStorage` and attached to API requests by the Axios interceptor.
+
+## API overview
+
+All API routes are under `/api/v1`.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/auth/register` | Register a user |
+| `POST` | `/auth/login` | Get a JWT using form-encoded credentials |
+| `GET` | `/auth/me` | Get the authenticated user's profile |
+| `GET` | `/restaurants/` | List restaurants |
+| `POST` | `/restaurants/` | Create a restaurant (owner) |
+| `GET` | `/restaurants/{restaurant_id}` | Get restaurant details and menu |
+| `POST` | `/restaurants/{restaurant_id}/items` | Add a menu item (owner) |
+| `POST` | `/orders/` | Place an order (customer) |
+| `GET` | `/orders/me` | Get orders relevant to the authenticated role |
+| `GET` | `/orders/{order_id}` | Get an authorized order |
+| `PATCH` | `/orders/{order_id}/status` | Update order status according to role and workflow |
+| `POST` | `/orders/{order_id}/assign-rider` | Assign a delivery partner (owner) |
+| `GET` | `/orders/insights/summary` | Get customer order statistics and insights |
+| `POST` | `/orders/advisor` | Ask a question grounded in the authenticated customer's order history |
+| `GET` | `/orders/restaurant/analytics` | Get restaurant-owner analytics |
+| `GET` | `/orders/stale-reminders` | Get stale-order reminders (owner) |
+| `POST` | `/orders/{order_id}/refund-request` | Request a refund (customer) |
+| `POST` | `/orders/{order_id}/refund-decision` | Resolve a refund request (owner) |
+| `POST` | `/orders/{order_id}/review` | Review a delivered order (customer) |
+| `POST` | `/recommendations/` | Get Gemini recommendations from available menu items |
+| `GET` | `/health` | Health check (outside `/api/v1`) |
+
+See `/docs` for request and response schemas when the backend is running with debug docs enabled.
+
+## AI advisor configuration
+
+The order-history advisor works without restaurant/menu inventory, but its history-based answers depend on the signed-in customer having orders. It sends a bounded set of recent orders and aggregate order statistics to the configured provider.
+
+Configure provider keys in the **backend** `.env`:
+
+```env
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-3.8-flash
+
+# Optional; takes precedence over Gemini when configured
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+With Docker Compose, recreate the backend after changing environment variables:
+
+```powershell
+docker compose up -d --force-recreate backend
+```
+
+Without either key, the advisor returns a configuration error. Provider timeouts and rate limits are surfaced to the user. The advisor's per-customer request limiter is in-memory, so its counts reset when the backend restarts and are not shared across multiple backend replicas.
+
+## Tests and frontend checks
+
+Run the backend tests from the repository root:
+
+```powershell
+pytest -v
+```
+
+Run the frontend checks:
+
+```powershell
+Set-Location frontend
+npm run lint
+npm run build
+```
+
+## Current limitations
+
+- Restaurants and menus must be created or seeded before customers can browse and order.
+- The backend currently supports adding menu items, but does not expose menu-item editing/deletion or a delivery-partner directory for owner assignment.
+- Payments are mock payments; no real payment gateway is connected.
+- Reviews and refunds have backend endpoints, but dedicated frontend workflows are not currently exposed.
+- The in-memory AI rate limiter is intended for a single backend process, not distributed deployments.
+
+## Security notes
+
+- Never commit `.env` or frontend environment files containing secrets.
+- Keep AI provider keys on the backend; Vite variables are bundled into browser code.
+- Use a unique, strong `JWT_SECRET_KEY` outside local development.
+
+## License
+
+See [LICENSE](LICENSE) if present in the repository.

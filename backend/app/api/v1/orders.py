@@ -1,10 +1,13 @@
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from google import genai
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.deps import CurrentUserDep, RoleChecker, SessionDep
@@ -37,12 +40,191 @@ from backend.app.schemas.order import (
     ReviewResponse,
     StaleOrderReminderResponse,
 )
+from backend.app.services.ai.order_history_advisor import (
+    OrderAdvisorError,
+    answer_order_history_question,
+    build_order_history_context,
+)
 
 router = APIRouter(prefix="/orders", tags=["Orders & Delivery"])
 
 CustomerDep = Annotated[User, Depends(RoleChecker([UserRole.CUSTOMER]))]
 OwnerDep = Annotated[User, Depends(RoleChecker([UserRole.RESTAURANT_OWNER]))]
 RiderDep = Annotated[User, Depends(RoleChecker([UserRole.DELIVERY_PARTNER]))]
+
+ORDER_HISTORY_LIMIT = 50
+ADVISOR_REQUESTS_PER_MINUTE = 10
+
+
+class OrderAdvisorRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+
+
+class OrderAdvisorResponse(BaseModel):
+    answer: str
+    provider: str
+    total_orders: int
+    recent_orders_included: int
+
+
+class UserRequestRateLimiter:
+    def __init__(self, limit: int, window_seconds: int):
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self.requests: dict[int, list[float]] = {}
+        self.lock = asyncio.Lock()
+
+    async def check(self, user_id: int) -> int | None:
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        async with self.lock:
+            for existing_user_id, timestamps in list(self.requests.items()):
+                active = [timestamp for timestamp in timestamps if timestamp > cutoff]
+                if active:
+                    self.requests[existing_user_id] = active
+                else:
+                    self.requests.pop(existing_user_id, None)
+
+            timestamps = self.requests.setdefault(user_id, [])
+            if len(timestamps) >= self.limit:
+                return max(1, int(self.window_seconds - (now - timestamps[0])))
+            timestamps.append(now)
+        return None
+
+
+advisor_rate_limiter = UserRequestRateLimiter(
+    limit=ADVISOR_REQUESTS_PER_MINUTE,
+    window_seconds=60,
+)
+
+
+def _order_summary(order: Order) -> dict:
+    created_at = order.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return {
+        "order_id": order.id,
+        "restaurant": order.restaurant.name if order.restaurant else "Unknown restaurant",
+        "status": order.status.value,
+        "created_at": created_at.isoformat(),
+        "total_inr": round(order.total_amount, 2),
+        "items": [
+            {
+                "name": item.menu_item.name if item.menu_item else f"Item #{item.menu_item_id}",
+                "quantity": item.quantity,
+                "unit_price_inr": round(item.unit_price, 2),
+            }
+            for item in order.items
+        ],
+    }
+
+
+@router.post("/advisor", response_model=OrderAdvisorResponse)
+async def ask_order_history_advisor(
+    request: OrderAdvisorRequest,
+    session: SessionDep,
+    current_user: CustomerDep,
+):
+    retry_after = await advisor_rate_limiter.check(current_user.id)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="You have reached the order-advisor request limit. Please try again shortly.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    customer_filter = Order.customer_id == current_user.id
+    excluded_statuses = [
+        OrderStatus.CANCELLED,
+        OrderStatus.REFUNDED,
+    ]
+    order_options = (
+        selectinload(Order.items).selectinload(OrderItem.menu_item),
+        selectinload(Order.restaurant),
+    )
+
+    total_orders_result = await session.execute(
+        select(func.count(Order.id)).where(customer_filter)
+    )
+    total_orders = total_orders_result.scalar_one()
+
+    recent_orders_result = await session.execute(
+        select(Order)
+        .where(customer_filter)
+        .options(*order_options)
+        .order_by(desc(Order.created_at))
+        .limit(ORDER_HISTORY_LIMIT)
+    )
+    recent_orders = recent_orders_result.scalars().all()
+
+    active_orders_result = await session.execute(
+        select(Order)
+        .where(
+            customer_filter,
+            Order.status.not_in(
+                [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED]
+            ),
+        )
+        .options(*order_options)
+        .order_by(desc(Order.created_at))
+        .limit(ORDER_HISTORY_LIMIT)
+    )
+    active_orders = active_orders_result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    week_start = datetime(
+        now.year, now.month, now.day, tzinfo=timezone.utc
+    ) - timedelta(days=now.weekday())
+    weekly_spending_result = await session.execute(
+        select(func.coalesce(func.sum(Order.total_amount), 0.0)).where(
+            customer_filter,
+            Order.created_at >= week_start,
+            Order.status.not_in(excluded_statuses),
+        )
+    )
+    spending_this_week = float(weekly_spending_result.scalar_one())
+
+    popular_items_result = await session.execute(
+        select(
+            MenuItem.name,
+            func.sum(OrderItem.quantity).label("quantity"),
+        )
+        .join(OrderItem, OrderItem.menu_item_id == MenuItem.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(customer_filter, Order.status.not_in(excluded_statuses))
+        .group_by(MenuItem.id, MenuItem.name)
+        .order_by(desc("quantity"), MenuItem.name)
+        .limit(10)
+    )
+    popular_items = [
+        {"name": name, "quantity": quantity}
+        for name, quantity in popular_items_result.all()
+    ]
+
+    context = build_order_history_context(
+        total_orders=total_orders,
+        recent_orders=[_order_summary(order) for order in recent_orders],
+        active_orders=[_order_summary(order) for order in active_orders],
+        spending_this_week=spending_this_week,
+        most_ordered_items=popular_items,
+    )
+
+    try:
+        answer, provider = await answer_order_history_question(request.question, context)
+    except OrderAdvisorError as error:
+        headers = {"Retry-After": error.retry_after} if error.retry_after else None
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=str(error),
+            headers=headers,
+        ) from error
+
+    return OrderAdvisorResponse(
+        answer=answer,
+        provider=provider,
+        total_orders=total_orders,
+        recent_orders_included=len(recent_orders),
+    )
 
 
 def order_eager_options():

@@ -1,5 +1,11 @@
 import pytest
 from jose import jwt
+from sqlalchemy import select
+
+from backend.app.core.database import AsyncSessionLocal
+from backend.app.models.order import Order, OrderStatus
+from backend.app.models.restaurant import Restaurant
+from backend.app.models.user import User
 
 
 async def get_token(client, email: str, password: str) -> str:
@@ -124,14 +130,54 @@ async def test_refund_workflow(client):
 @pytest.mark.asyncio
 async def test_restaurant_analytics(client):
     owner_token = await get_token(client, "dhaba_owner@campus.edu", "OwnerPass123!")
-    res = await client.get(
+    headers = {"Authorization": f"Bearer {owner_token}"}
+    baseline_res = await client.get(
         "/api/v1/orders/restaurant/analytics",
-        headers={"Authorization": f"Bearer {owner_token}"},
+        headers=headers,
     )
+    assert baseline_res.status_code == 200
+    baseline = baseline_res.json()
+
+    async with AsyncSessionLocal() as session:
+        owner = await session.scalar(
+            select(User).where(User.email == "dhaba_owner@campus.edu")
+        )
+        restaurant = await session.scalar(
+            select(Restaurant).where(Restaurant.owner_id == owner.id)
+        )
+        customer = await session.scalar(
+            select(User).where(User.email == "student@campus.edu")
+        )
+        session.add_all(
+            [
+                Order(
+                    customer_id=customer.id,
+                    restaurant_id=restaurant.id,
+                    total_amount=amount,
+                    status=order_status,
+                    delivery_address="Campus Block A",
+                )
+                for amount, order_status in [
+                    (25.25, OrderStatus.DELIVERED),
+                    (37.50, OrderStatus.DELIVERED),
+                    (12.00, OrderStatus.CANCELLED),
+                    (18.00, OrderStatus.REFUNDED),
+                    (22.00, OrderStatus.PLACED),
+                ]
+            ]
+        )
+        await session.commit()
+
+    res = await client.get("/api/v1/orders/restaurant/analytics", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert "total_orders" in data
     assert "total_revenue" in data
+    assert data["total_orders"] == baseline["total_orders"] + 5
+    assert data["completed_orders"] == baseline["completed_orders"] + 2
+    assert data["cancelled_orders"] == baseline["cancelled_orders"] + 1
+    assert data["refunded_orders"] == baseline["refunded_orders"] + 1
+    assert data["total_revenue"] == pytest.approx(baseline["total_revenue"] + 62.75)
 
 
 @pytest.mark.asyncio

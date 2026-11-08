@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from google import genai
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.deps import CurrentUserDep, RoleChecker, SessionDep
@@ -438,31 +438,47 @@ async def get_restaurant_stats(
     current_user: OwnerDep,
 ):
     """Aggregate restaurant performance, orders, and total revenue."""
-    rest_res = await session.execute(
-        select(Restaurant).where(Restaurant.owner_id == current_user.id)
+    stats_res = await session.execute(
+        select(
+            Restaurant.id.label("restaurant_id"),
+            func.count(Order.id).label("total_orders"),
+            func.coalesce(
+                func.sum(case((Order.status == OrderStatus.DELIVERED, 1), else_=0)),
+                0,
+            ).label("completed_orders"),
+            func.coalesce(
+                func.sum(case((Order.status == OrderStatus.CANCELLED, 1), else_=0)),
+                0,
+            ).label("cancelled_orders"),
+            func.coalesce(
+                func.sum(case((Order.status == OrderStatus.REFUNDED, 1), else_=0)),
+                0,
+            ).label("refunded_orders"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Order.status == OrderStatus.DELIVERED, Order.total_amount),
+                        else_=0,
+                    )
+                ),
+                0.0,
+            ).label("total_revenue"),
+        )
+        .outerjoin(Order, Order.restaurant_id == Restaurant.id)
+        .where(Restaurant.owner_id == current_user.id)
+        .group_by(Restaurant.id)
     )
-    restaurant = rest_res.scalar_one_or_none()
-    if not restaurant:
+    stats = stats_res.one_or_none()
+    if stats is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No restaurant found for current owner")
 
-    orders_res = await session.execute(
-        select(Order).where(Order.restaurant_id == restaurant.id)
-    )
-    all_orders = orders_res.scalars().all()
-
-    total_orders = len(all_orders)
-    completed_orders = sum(1 for o in all_orders if o.status == OrderStatus.DELIVERED)
-    cancelled_orders = sum(1 for o in all_orders if o.status == OrderStatus.CANCELLED)
-    refunded_orders = sum(1 for o in all_orders if o.status == OrderStatus.REFUNDED)
-    total_revenue = sum(o.total_amount for o in all_orders if o.status == OrderStatus.DELIVERED)
-
     return RestaurantStatsResponse(
-        restaurant_id=restaurant.id,
-        total_orders=total_orders,
-        total_revenue=round(total_revenue, 2),
-        completed_orders=completed_orders,
-        cancelled_orders=cancelled_orders,
-        refunded_orders=refunded_orders,
+        restaurant_id=stats.restaurant_id,
+        total_orders=stats.total_orders,
+        total_revenue=round(stats.total_revenue, 2),
+        completed_orders=stats.completed_orders,
+        cancelled_orders=stats.cancelled_orders,
+        refunded_orders=stats.refunded_orders,
     )
 
 

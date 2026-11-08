@@ -21,20 +21,18 @@ const CustomerDashboard = () => {
 
     const loadData = useCallback(async () => {
         setError('');
-        try {
-            const [ordersResult, insightsResult] = await Promise.allSettled([
-                orderService.listMine(),
-                orderService.insights(),
-            ]);
-            if (ordersResult.status === 'fulfilled') setOrders(ordersResult.value);
-            else setError(getErrorMessage(ordersResult.reason, 'Could not load your order history.'));
-            if (insightsResult.status === 'fulfilled') setInsights(insightsResult.value);
-            else setError((current) => current || getErrorMessage(insightsResult.reason, 'Could not load your insights.'));
-        } catch (requestError) {
-            setError(getErrorMessage(requestError, 'Could not load your order activity.'));
-        } finally {
-            setLoading(false);
-        }
+        const ordersRequest = orderService.listMine()
+            .then(setOrders)
+            .catch((requestError) => {
+                setError(getErrorMessage(requestError, 'Could not load your order history.'));
+            })
+            .finally(() => setLoading(false));
+        const insightsRequest = orderService.insights()
+            .then(setInsights)
+            .catch((requestError) => {
+                setError((current) => current || getErrorMessage(requestError, 'Could not load your insights.'));
+            });
+        await Promise.all([ordersRequest, insightsRequest]);
     }, []);
 
     useEffect(() => {

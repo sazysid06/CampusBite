@@ -18,6 +18,9 @@ const CustomerDashboard = () => {
     const [recommendationError, setRecommendationError] = useState('');
     const [asking, setAsking] = useState(false);
     const [actionError, setActionError] = useState('');
+    const [actionNotice, setActionNotice] = useState('');
+    const [refundReasons, setRefundReasons] = useState({});
+    const [submittingRefund, setSubmittingRefund] = useState(null);
 
     const loadData = useCallback(async () => {
         setError('');
@@ -42,11 +45,29 @@ const CustomerDashboard = () => {
 
     const cancelOrder = async (orderId) => {
         setActionError('');
+        setActionNotice('');
         try {
             await orderService.updateStatus(orderId, 'cancelled');
             await loadData();
         } catch (requestError) {
             setActionError(getErrorMessage(requestError, 'Could not cancel this order.'));
+        }
+    };
+
+    const requestRefund = async (event, orderId) => {
+        event.preventDefault();
+        setActionError('');
+        setActionNotice('');
+        setSubmittingRefund(orderId);
+        try {
+            await orderService.requestRefund(orderId, refundReasons[orderId]);
+            setRefundReasons((current) => ({ ...current, [orderId]: '' }));
+            setActionNotice(`Refund request for order #${orderId} submitted.`);
+            await loadData();
+        } catch (requestError) {
+            setActionError(getErrorMessage(requestError, 'Could not submit this refund request.'));
+        } finally {
+            setSubmittingRefund(null);
         }
     };
 
@@ -74,6 +95,7 @@ const CustomerDashboard = () => {
                 <p>Keep an eye on your orders and discover what to try next.</p>
             </section>
             {location.state?.orderPlaced && <div className="notice notice-success">Order placed! The restaurant has received your order.</div>}
+            {actionNotice && <div className="notice notice-success" role="status">{actionNotice}</div>}
             <ErrorMessage message={error} />
             <ErrorMessage message={actionError} />
             {insights && (
@@ -89,6 +111,30 @@ const CustomerDashboard = () => {
                     <OrderCard key={order.id} order={order}>
                         {order.status === 'placed' && <button className="button button-danger button-small" onClick={() => cancelOrder(order.id)}>Cancel order</button>}
                         {order.review && <span className="review-summary">Your review: {order.review.rating}/5</span>}
+                        {order.refund_request && <span className="muted-note">Refund request: {order.refund_request.status}{order.refund_request.decision_notes ? ` — ${order.refund_request.decision_notes}` : ''}</span>}
+                        {order.status === 'delivered' && !order.refund_request && (
+                            <form className="refund-request-form" onSubmit={(event) => requestRefund(event, order.id)}>
+                                <label className="field">
+                                    Return/refund reason
+                                    <textarea
+                                        required
+                                        minLength={5}
+                                        maxLength={1000}
+                                        value={refundReasons[order.id] || ''}
+                                        onChange={(event) => setRefundReasons((current) => ({
+                                            ...current,
+                                            [order.id]: event.target.value,
+                                        }))}
+                                    />
+                                </label>
+                                <button
+                                    className="button button-quiet button-small"
+                                    disabled={submittingRefund === order.id}
+                                >
+                                    {submittingRefund === order.id ? 'Submitting...' : 'Request refund'}
+                                </button>
+                            </form>
+                        )}
                     </OrderCard>
                 ))}</div> : <EmptyState title="No orders yet" detail="Your next campus favorite is waiting." action={<Link to="/restaurants" className="button button-primary">Browse restaurants</Link>} />}
             </section>

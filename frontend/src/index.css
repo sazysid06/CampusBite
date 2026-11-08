@@ -139,6 +139,7 @@ p { color: var(--muted); line-height: 1.65; }
 .order-card-top h3 { margin: 4px 0 0; }.order-card-bottom { margin-top: 15px; color: #8e887f; font-size: .76rem; }.order-card-bottom strong { color: var(--ink); font-size: .96rem; }
 .order-items { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }.order-items span { padding: 5px 8px; border-radius: 6px; color: #69635b; background: #f6f4f0; font-size: .75rem; }
 .order-delivery-address { margin-top: 9px; color: #89837a; font-size: .77rem; }.order-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 13px; }.review-summary { color: #847056; font-size: .78rem; }
+.refund-request-form { display: flex; flex: 1 1 100%; align-items: end; gap: 9px; }.refund-request-form .field { width: min(100%, 430px); }.refund-request-form textarea { min-height: 65px; }
 .status-pill { display: inline-flex; padding: 6px 9px; border-radius: 20px; color: #6e6a63; background: #f1efeb; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .045em; white-space: nowrap; }
 .status-placed, .status-accepted { color: #98631c; background: #fff4d7; }.status-preparing, .status-assigned, .status-out_for_delivery { color: #236a91; background: #e7f3fa; }.status-ready, .status-delivered { color: #26714e; background: #e7f4eb; }.status-cancelled, .status-refunded { color: #a3433d; background: #fcecea; }
 .count-bubble { vertical-align: 3px; }

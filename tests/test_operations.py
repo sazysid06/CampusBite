@@ -125,6 +125,98 @@ async def test_refund_workflow(client):
     assert res_decide.status_code == 200
     assert res_decide.json()["status"] == "refunded"
     assert res_decide.json()["payment"]["status"] == "refunded"
+    assert res_decide.json()["refund_request"]["status"] == "approved"
+
+    duplicate = await client.post(
+        f"/api/v1/orders/{order_id}/refund-request",
+        json={"reason": "Another refund request"},
+        headers={"Authorization": f"Bearer {student_token}"},
+    )
+    assert duplicate.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_refund_validation_and_rejection(client):
+    student_token = await get_token(client, "student@campus.edu", "StudentPass123!")
+    owner_token = await get_token(client, "dhaba_owner@campus.edu", "OwnerPass123!")
+    rider_token = await get_token(client, "rider@campus.edu", "RiderPass123!")
+    student_headers = {"Authorization": f"Bearer {student_token}"}
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+    placed = await client.post(
+        "/api/v1/orders/",
+        json={
+            "restaurant_id": 1,
+            "delivery_address": "Hostel C Room 101",
+            "items": [{"menu_item_id": 1, "quantity": 1}],
+        },
+        headers=student_headers,
+    )
+    assert placed.status_code == 201
+    payment = placed.json()["payment"]
+    assert payment["status"] == "mock_paid"
+    assert payment["transaction_reference"].startswith("MOCK_TXN_")
+
+    before_delivery = await client.post(
+        f"/api/v1/orders/{placed.json()['id']}/refund-request",
+        json={"reason": "Not delivered yet"},
+        headers=student_headers,
+    )
+    assert before_delivery.status_code == 400
+
+    order_id = await create_delivered_order(client, student_token, owner_token, rider_token)
+    missing_reason = await client.post(
+        f"/api/v1/orders/{order_id}/refund-request",
+        json={},
+        headers=student_headers,
+    )
+    assert missing_reason.status_code == 422
+
+    short_reason = await client.post(
+        f"/api/v1/orders/{order_id}/refund-request",
+        json={"reason": "  "},
+        headers=student_headers,
+    )
+    assert short_reason.status_code == 422
+
+    request = await client.post(
+        f"/api/v1/orders/{order_id}/refund-request",
+        json={"reason": "Incorrect item delivered"},
+        headers=student_headers,
+    )
+    assert request.status_code == 201
+    assert request.json()["status"] == "pending"
+
+    invalid_decision = await client.post(
+        f"/api/v1/orders/{order_id}/refund-decision",
+        json={"status": "pending"},
+        headers=owner_headers,
+    )
+    assert invalid_decision.status_code == 422
+
+    rejected = await client.post(
+        f"/api/v1/orders/{order_id}/refund-decision",
+        json={"status": "rejected", "decision_notes": "The order matches the receipt."},
+        headers=owner_headers,
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "delivered"
+    assert rejected.json()["payment"]["status"] == "mock_paid"
+    assert rejected.json()["refund_request"]["status"] == "rejected"
+
+    duplicate = await client.post(
+        f"/api/v1/orders/{order_id}/refund-request",
+        json={"reason": "Trying again after rejection"},
+        headers=student_headers,
+    )
+    assert duplicate.status_code == 400
+
+    second_decision = await client.post(
+        f"/api/v1/orders/{order_id}/refund-decision",
+        json={"status": "approved"},
+        headers=owner_headers,
+    )
+    assert second_decision.status_code == 400
 
 
 @pytest.mark.asyncio

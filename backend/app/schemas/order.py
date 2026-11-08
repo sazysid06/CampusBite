@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, List, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from backend.app.models.order import (
     DeliveryStatus,
@@ -77,11 +77,20 @@ class ReviewResponse(BaseModel):
 
 # --- Refund Schemas ---
 class RefundRequestCreate(BaseModel):
-    reason: str = Field(min_length=5, description="Reason for the refund request")
+    reason: Annotated[
+        str,
+        StringConstraints(
+            min_length=5,
+            max_length=1000,
+            strip_whitespace=True,
+        ),
+    ] = Field(description="Reason for the refund request")
 
 
 class RefundDecisionUpdate(BaseModel):
-    status: RefundStatus = Field(description="Must be approved or rejected")
+    status: Literal[RefundStatus.APPROVED, RefundStatus.REJECTED] = Field(
+        description="Must be approved or rejected"
+    )
     decision_notes: Optional[str] = None
 
 

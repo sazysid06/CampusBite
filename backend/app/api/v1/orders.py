@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from google import genai
 from pydantic import BaseModel, Field
 from sqlalchemy import case, desc, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.deps import CurrentUserDep, RoleChecker, SessionDep
@@ -755,7 +756,14 @@ async def request_refund(
         status=RefundStatus.PENDING,
     )
     session.add(refund)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A refund request has already been submitted for this order",
+        ) from error
     await session.refresh(refund)
     return refund
 

@@ -18,6 +18,7 @@ const OwnerDashboard = () => {
     const [menuForm, setMenuForm] = useState({ name: '', description: '', price: '', category: '' });
     const [savingRestaurant, setSavingRestaurant] = useState(false);
     const [savingMenuItem, setSavingMenuItem] = useState(false);
+    const [resolvingRefund, setResolvingRefund] = useState(null);
 
     const loadData = useCallback(async () => {
         setError('');
@@ -104,6 +105,21 @@ const OwnerDashboard = () => {
         }
     };
 
+    const decideRefund = async (orderId, decision) => {
+        setError('');
+        setNotice('');
+        setResolvingRefund(orderId);
+        try {
+            await orderService.decideRefund(orderId, decision);
+            setNotice(`Refund request for order #${orderId} ${decision}.`);
+            await loadData();
+        } catch (requestError) {
+            setError(getErrorMessage(requestError, 'Could not resolve this refund request.'));
+        } finally {
+            setResolvingRefund(null);
+        }
+    };
+
     if (loading) return <LoadingState label="Loading your restaurant dashboard..." />;
 
     if (!restaurant) {
@@ -144,6 +160,34 @@ const OwnerDashboard = () => {
                             {nextStatus[order.status] && <button className="button button-primary button-small" onClick={() => updateOrder(order.id, nextStatus[order.status])}>Mark {formatStatus(nextStatus[order.status])}</button>}
                             {['placed', 'accepted'].includes(order.status) && <button className="button button-danger button-small" onClick={() => updateOrder(order.id, 'cancelled')}>Cancel</button>}
                             {order.status === 'ready' && <span className="muted-note">Ready for rider assignment. The backend does not currently provide a rider directory.</span>}
+                            {order.refund_request && (
+                                <>
+                                    <span className="muted-note">
+                                        Refund {order.refund_request.status}: {order.refund_request.reason}
+                                    </span>
+                                    {order.refund_request.status === 'pending' && (
+                                        <>
+                                            <button
+                                                className="button button-primary button-small"
+                                                disabled={resolvingRefund === order.id}
+                                                onClick={() => decideRefund(order.id, 'approved')}
+                                            >
+                                                Approve refund
+                                            </button>
+                                            <button
+                                                className="button button-danger button-small"
+                                                disabled={resolvingRefund === order.id}
+                                                onClick={() => decideRefund(order.id, 'rejected')}
+                                            >
+                                                Reject refund
+                                            </button>
+                                        </>
+                                    )}
+                                    {order.refund_request.decision_notes && (
+                                        <span className="muted-note">{order.refund_request.decision_notes}</span>
+                                    )}
+                                </>
+                            )}
                         </OrderCard>
                     ))}</div> : <EmptyState title="No orders yet" detail="New customer orders will show up here." />}
                 </section>

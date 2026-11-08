@@ -8,6 +8,15 @@ export const orderService = {
     updateStatus: async (orderId, status) => (
         await api.patch(`/orders/${orderId}/status`, { status })
     ).data,
+    requestRefund: async (orderId, reason) => (
+        await api.post(`/orders/${orderId}/refund-request`, { reason })
+    ).data,
+    decideRefund: async (orderId, status, decisionNotes = null) => (
+        await api.post(`/orders/${orderId}/refund-decision`, {
+            status,
+            decision_notes: decisionNotes,
+        })
+    ).data,
     askOrderHistory: async (question) => (
         await api.post('/orders/advisor', { question })
     ).data,

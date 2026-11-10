@@ -3,6 +3,7 @@ from sqlalchemy import select
 from backend.app.core.database import AsyncSessionLocal, engine, Base
 from backend.app.core.security import hash_password
 from backend.app.models.user import User, UserRole
+from backend.app.models.rider import RiderAvailability
 from backend.app.models.restaurant import Restaurant, MenuItem
 
 
@@ -41,6 +42,9 @@ async def seed_database():
         )
         session.add_all([student, owner, delivery])
         await session.flush()
+        session.add(
+            RiderAvailability(user_id=delivery.id, is_available=True)
+        )
 
         # 3. Seed Restaurant
         dhaba = Restaurant(

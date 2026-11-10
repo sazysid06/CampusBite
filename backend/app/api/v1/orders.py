@@ -1,4 +1,5 @@
 import asyncio
+import random
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
@@ -7,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from google import genai
 from pydantic import BaseModel, Field
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -26,10 +27,11 @@ from backend.app.models.order import (
     Review,
 )
 from backend.app.models.restaurant import MenuItem, Restaurant
+from backend.app.models.rider import RiderAvailability
 from backend.app.models.user import User, UserRole
 from backend.app.schemas.order import (
-    AssignDeliveryPartner,
     CustomerOrderInsights,
+    DeliveryStatusUpdate,
     OrderCreate,
     OrderResponse,
     OrderStatusUpdate,
@@ -39,6 +41,8 @@ from backend.app.schemas.order import (
     RestaurantStatsResponse,
     ReviewCreate,
     ReviewResponse,
+    RiderAvailabilityResponse,
+    RiderAvailabilityUpdate,
     StaleOrderReminderResponse,
 )
 from backend.app.services.ai.order_history_advisor import (
@@ -237,6 +241,68 @@ def order_eager_options():
         selectinload(Order.review),
         selectinload(Order.restaurant),
     )
+
+
+async def assign_available_rider(session, order: Order) -> bool:
+    if not order.delivery:
+        order.delivery = Delivery(status=DeliveryStatus.UNASSIGNED)
+        await session.flush()
+    if order.delivery.delivery_partner_id is not None:
+        return True
+
+    candidates_result = await session.execute(
+        select(RiderAvailability)
+        .join(User, User.id == RiderAvailability.user_id)
+        .where(
+            RiderAvailability.is_available.is_(True),
+            User.role == UserRole.DELIVERY_PARTNER,
+            User.is_active.is_(True),
+        )
+    )
+    candidates = list(candidates_result.scalars().all())
+    random.shuffle(candidates)
+
+    for candidate in candidates:
+        claimed = await session.execute(
+            update(RiderAvailability)
+            .where(
+                RiderAvailability.user_id == candidate.user_id,
+                RiderAvailability.is_available.is_(True),
+            )
+            .values(is_available=False)
+        )
+        if claimed.rowcount != 1:
+            continue
+
+        order.delivery.delivery_partner_id = candidate.user_id
+        order.delivery.status = DeliveryStatus.ON_THE_WAY_TO_RESTAURANT
+        await session.flush()
+        return True
+    return False
+
+
+async def assign_waiting_order(session, rider: RiderAvailability) -> None:
+    waiting_result = await session.execute(
+        select(Order)
+        .join(Delivery, Delivery.order_id == Order.id)
+        .options(selectinload(Order.delivery))
+        .where(
+            Order.status.in_(
+                [OrderStatus.ACCEPTED, OrderStatus.PREPARING, OrderStatus.READY]
+            ),
+            Delivery.delivery_partner_id.is_(None),
+            Delivery.status == DeliveryStatus.UNASSIGNED,
+        )
+        .order_by(Order.created_at)
+        .limit(1)
+    )
+    waiting_order = waiting_result.scalar_one_or_none()
+    if waiting_order is None:
+        return
+
+    rider.is_available = False
+    waiting_order.delivery.delivery_partner_id = rider.user_id
+    waiting_order.delivery.status = DeliveryStatus.ON_THE_WAY_TO_RESTAURANT
 
 
 # ==========================================
@@ -538,6 +604,66 @@ async def get_stale_order_reminders(
     return reminders
 
 
+@router.get("/rider/availability", response_model=RiderAvailabilityResponse)
+async def get_rider_availability(
+    session: SessionDep,
+    current_user: RiderDep,
+):
+    result = await session.execute(
+        select(RiderAvailability).where(
+            RiderAvailability.user_id == current_user.id
+        )
+    )
+    availability = result.scalar_one_or_none()
+    return RiderAvailabilityResponse(
+        is_available=availability.is_available if availability else False
+    )
+
+
+@router.patch("/rider/availability", response_model=RiderAvailabilityResponse)
+async def set_rider_availability(
+    payload: RiderAvailabilityUpdate,
+    session: SessionDep,
+    current_user: RiderDep,
+):
+    result = await session.execute(
+        select(RiderAvailability).where(
+            RiderAvailability.user_id == current_user.id
+        )
+    )
+    availability = result.scalar_one_or_none()
+
+    active_delivery = await session.execute(
+        select(Delivery.id).where(
+            Delivery.delivery_partner_id == current_user.id,
+            Delivery.status.not_in(
+                [DeliveryStatus.COMPLETED, DeliveryStatus.FAILED]
+            ),
+        ).limit(1)
+    )
+    if active_delivery.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Complete your active delivery before changing availability",
+        )
+
+    if availability is None:
+        availability = RiderAvailability(
+            user_id=current_user.id,
+            is_available=payload.is_available,
+        )
+        session.add(availability)
+    else:
+        availability.is_available = payload.is_available
+
+    if payload.is_available:
+        await session.flush()
+        await assign_waiting_order(session, availability)
+
+    await session.commit()
+    return RiderAvailabilityResponse(is_available=availability.is_available)
+
+
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order_by_id(
     order_id: int,
@@ -593,23 +719,52 @@ async def update_order_status(
             detail=f"Cannot change status from terminal state '{current_status.value}'",
         )
 
-    # 1. Customer Cancellation
+    # 1. Customer cancellation or delivery confirmation
     if current_user.role == UserRole.CUSTOMER:
         if order.customer_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
-        if target_status != OrderStatus.CANCELLED:
+        if target_status == OrderStatus.DELIVERED:
+            if (
+                current_status != OrderStatus.OUT_FOR_DELIVERY
+                or not order.delivery
+                or order.delivery.status != DeliveryStatus.ON_ROUTE
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Customers can only cancel orders while placed or confirm delivery once the rider is on route",
+                )
+            order.status = OrderStatus.DELIVERED
+            order.delivery.status = DeliveryStatus.COMPLETED
+            order.delivery.delivered_time = now
+            availability_result = await session.execute(
+                select(RiderAvailability).where(
+                    RiderAvailability.user_id
+                    == order.delivery.delivery_partner_id
+                )
+            )
+            availability = availability_result.scalar_one_or_none()
+            if availability is None:
+                availability = RiderAvailability(
+                    user_id=order.delivery.delivery_partner_id,
+                    is_available=True,
+                )
+                session.add(availability)
+            else:
+                availability.is_available = True
+        elif target_status == OrderStatus.CANCELLED:
+            if current_status != OrderStatus.PLACED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Customers can only cancel orders in 'placed' status",
+                )
+            order.status = OrderStatus.CANCELLED
+            if order.payment:
+                order.payment.status = PaymentStatus.REFUNDED
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Customers can only cancel orders",
+                detail="Customers can only cancel placed orders or confirm delivery",
             )
-        if current_status != OrderStatus.PLACED:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Customers can only cancel orders in 'placed' status",
-            )
-        order.status = OrderStatus.CANCELLED
-        if order.payment:
-            order.payment.status = PaymentStatus.REFUNDED
 
     # 2. Restaurant Owner Transitions
     elif current_user.role == UserRole.RESTAURANT_OWNER:
@@ -629,36 +784,34 @@ async def update_order_status(
                 detail=f"Invalid transition from '{current_status.value}' to '{target_status.value}'. Allowed: {[s.value for s in allowed]}",
             )
         order.status = target_status
-        if target_status == OrderStatus.CANCELLED and order.payment:
-            order.payment.status = PaymentStatus.REFUNDED
+        if target_status == OrderStatus.ACCEPTED:
+            await assign_available_rider(session, order)
+        if target_status == OrderStatus.CANCELLED:
+            if order.payment:
+                order.payment.status = PaymentStatus.REFUNDED
+            if order.delivery and order.delivery.delivery_partner_id:
+                availability_result = await session.execute(
+                    select(RiderAvailability).where(
+                        RiderAvailability.user_id
+                        == order.delivery.delivery_partner_id
+                    )
+                )
+                availability = availability_result.scalar_one_or_none()
+                if availability:
+                    availability.is_available = True
+                order.delivery.status = DeliveryStatus.FAILED
 
-    # 3. Delivery Partner Transitions
+    # 3. Delivery Partner transitions are handled by the delivery tracker endpoint.
     elif current_user.role == UserRole.DELIVERY_PARTNER:
         if not order.delivery or order.delivery.delivery_partner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only the assigned delivery partner can update this order",
             )
-
-        rider_valid_transitions = {
-            OrderStatus.ASSIGNED: [OrderStatus.OUT_FOR_DELIVERY],
-            OrderStatus.OUT_FOR_DELIVERY: [OrderStatus.DELIVERED],
-        }
-
-        allowed = rider_valid_transitions.get(current_status, [])
-        if target_status not in allowed:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid transition from '{current_status.value}' to '{target_status.value}'. Allowed: {[s.value for s in allowed]}",
-            )
-
-        order.status = target_status
-        if target_status == OrderStatus.OUT_FOR_DELIVERY:
-            order.delivery.status = DeliveryStatus.PICKED_UP
-            order.delivery.pickup_time = now
-        elif target_status == OrderStatus.DELIVERED:
-            order.delivery.status = DeliveryStatus.COMPLETED
-            order.delivery.delivered_time = now
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use the delivery tracker to update rider progress",
+        )
 
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role not permitted to update status")
@@ -668,49 +821,62 @@ async def update_order_status(
     return order
 
 
-# ==========================================
-# 4. Restaurant Owner: Assign Delivery Partner
-# ==========================================
-@router.post("/{order_id}/assign-rider", response_model=OrderResponse)
-async def assign_delivery_partner(
+@router.patch(
+    "/{order_id}/delivery-status",
+    response_model=OrderResponse,
+)
+async def update_delivery_status(
     order_id: int,
-    payload: AssignDeliveryPartner,
+    status_in: DeliveryStatusUpdate,
     session: SessionDep,
-    current_user: OwnerDep,
+    current_user: RiderDep,
 ):
-    """Assign delivery partner to an order once status is READY."""
-    res = await session.execute(
-        select(Order).where(Order.id == order_id).options(*order_eager_options())
+    result = await session.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .options(*order_eager_options())
     )
-    order = res.scalar_one_or_none()
+    order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-
-    if order.restaurant.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
-
-    if order.status != OrderStatus.READY:
+    if not order.delivery or order.delivery.delivery_partner_id != current_user.id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Delivery partner can only be assigned when order is in 'ready' status",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assigned delivery partner can update this delivery",
         )
 
-    rider_res = await session.execute(
-        select(User).where(User.id == payload.delivery_partner_id)
-    )
-    rider = rider_res.scalar_one_or_none()
-    if not rider or rider.role != UserRole.DELIVERY_PARTNER:
+    current_delivery_status = order.delivery.status
+    target_delivery_status = status_in.status
+    valid_transitions = {
+        DeliveryStatus.ON_THE_WAY_TO_RESTAURANT: [DeliveryStatus.AT_RESTAURANT],
+        DeliveryStatus.ASSIGNED: [DeliveryStatus.AT_RESTAURANT],
+        DeliveryStatus.AT_RESTAURANT: [DeliveryStatus.PICKED_UP],
+        DeliveryStatus.PICKED_UP: [DeliveryStatus.ON_ROUTE],
+    }
+    if target_delivery_status not in valid_transitions.get(
+        current_delivery_status, []
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provided ID is not a registered delivery partner",
+            detail=(
+                f"Invalid delivery transition from '{current_delivery_status.value}' "
+                f"to '{target_delivery_status.value}'"
+            ),
+        )
+    if (
+        target_delivery_status == DeliveryStatus.PICKED_UP
+        and order.status != OrderStatus.READY
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The restaurant must mark the order ready before pickup",
         )
 
-    if not order.delivery:
-        order.delivery = Delivery(order_id=order.id)
-
-    order.delivery.delivery_partner_id = rider.id
-    order.delivery.status = DeliveryStatus.ASSIGNED
-    order.status = OrderStatus.ASSIGNED
+    order.delivery.status = target_delivery_status
+    if target_delivery_status == DeliveryStatus.PICKED_UP:
+        order.delivery.pickup_time = datetime.now(timezone.utc)
+    elif target_delivery_status == DeliveryStatus.ON_ROUTE:
+        order.status = OrderStatus.OUT_FOR_DELIVERY
 
     await session.commit()
     await session.refresh(order)

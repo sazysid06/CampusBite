@@ -8,7 +8,7 @@ CampusBite is a campus food ordering and delivery application. It combines a Rea
 - **Restaurant discovery:** browse open restaurants, search the list, view restaurant details, and see available menu items.
 - **Cart and checkout:** add menu items to a single-restaurant cart, adjust quantities, retain the cart in browser storage, and submit an order.
 - **Dummy payments and refunds:** orders create a `mock_paid` payment record without a real gateway. Customers can request one refund after delivery; restaurant owners can approve or reject it.
-- **Order workflow:** customers can view their orders and cancel eligible orders; restaurant owners can advance orders through kitchen statuses; assigned delivery partners can update delivery status.
+- **Order workflow:** customers can view their orders, cancel eligible orders, and confirm completed deliveries. When a restaurant accepts an order, the backend randomly assigns an available rider; rider availability and progress (to restaurant, at restaurant, picked up, and on route) are tracked until customer confirmation marks the delivery complete and makes the rider available again.
 - **Owner workspace:** create a restaurant, add menu items, view incoming orders, resolve refund requests, and see backend-provided restaurant analytics.
 - **Customer dashboard:** order history and spending insights, plus an AI advisor for questions about the signed-in customer’s own order history.
 - **Private AI advisor:** order details are queried using the authenticated customer ID. The backend sends relevant order summaries and aggregates—not delivery addresses—to the AI provider. OpenAI is preferred when configured; Gemini is used as a fallback. The advisor is limited to 10 requests per customer per minute per backend process.
@@ -239,13 +239,15 @@ docker compose up -d --force-recreate backend
 
 Without either key, the advisor returns a configuration error. Provider timeouts and rate limits are surfaced to the user. The advisor's per-customer request limiter is in-memory, so its counts reset when the backend restarts and are not shared across multiple backend replicas.
 
-## Tests and frontend checks
+## Tests, smoke test, and CI checks
 
-Run the backend tests from the repository root. The test fixture uses a temporary SQLite database and test accounts; it does not use or alter the persistent application database:
+Run the backend smoke test and full test suite from the repository root. The smoke test checks application health, restaurant discovery, rider login/profile, and the rider availability tracker. Test fixtures use a temporary SQLite database and test accounts; they do not use or alter the persistent application database:
 
 ```powershell
 pytest -v
 ```
+
+GitHub Actions runs the same backend suite on pushes and pull requests, then checks the frontend with `npm ci`, lint, and a production build. No API keys or production database are required by CI.
 
 For Docker, rebuild the backend image when tests or backend code have changed, then run the suite:
 
@@ -254,7 +256,7 @@ docker compose up -d --build backend
 docker compose exec backend pytest -v
 ```
 
-The test database is temporary in both environments. Seeded demo data in the persistent Docker volume is not used by the tests.
+The test database is temporary in both environments. Seeded demo data in the persistent Docker volume is not used by the tests. The backend Docker image build also runs `tests/test_smoke.py`; a failing smoke test fails the build.
 
 Run the frontend checks:
 
@@ -267,7 +269,7 @@ npm run build
 ## Current limitations
 
 - Restaurants and menus must be created or seeded before customers can browse and order.
-- The backend currently supports adding menu items, but does not expose menu-item editing/deletion or a delivery-partner directory for owner assignment.
+- The backend currently supports adding menu items, but does not expose menu-item editing/deletion.
 - Payments are mock payments; no real payment gateway is connected.
 - Reviews currently have a backend endpoint but no dedicated frontend workflow.
 - The in-memory AI rate limiter is intended for a single backend process, not distributed deployments.

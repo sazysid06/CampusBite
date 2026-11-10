@@ -1,5 +1,4 @@
 import pytest
-from jose import jwt
 from sqlalchemy import select
 
 from backend.app.core.database import AsyncSessionLocal
@@ -17,59 +16,62 @@ async def get_token(client, email: str, password: str) -> str:
     return res.json()["access_token"]
 
 
-def get_user_id(token: str) -> int:
-    return int(jwt.get_unverified_claims(token)["sub"])
-
-
 async def create_delivered_order(client, student_token: str, owner_token: str, rider_token: str) -> int:
-    rider_id = get_user_id(rider_token)
+    student_headers = {"Authorization": f"Bearer {student_token}"}
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    rider_headers = {"Authorization": f"Bearer {rider_token}"}
+    availability = await client.patch(
+        "/api/v1/orders/rider/availability",
+        json={"is_available": True},
+        headers=rider_headers,
+    )
+    assert availability.status_code == 200
 
-    # 1. Place order
-    res = await client.post(
+    response = await client.post(
         "/api/v1/orders/",
         json={
             "restaurant_id": 1,
             "delivery_address": "Hostel C Room 101",
             "items": [{"menu_item_id": 1, "quantity": 1}],
         },
-        headers={"Authorization": f"Bearer {student_token}"},
+        headers=student_headers,
     )
-    assert res.status_code == 201
-    order_id = res.json()["id"]
+    assert response.status_code == 201
+    order_id = response.json()["id"]
 
-    # 2. Kitchen workflow to READY
-    await client.patch(
+    accepted = await client.patch(
         f"/api/v1/orders/{order_id}/status",
         json={"status": "accepted"},
-        headers={"Authorization": f"Bearer {owner_token}"},
+        headers=owner_headers,
     )
-    await client.patch(
-        f"/api/v1/orders/{order_id}/status",
-        json={"status": "preparing"},
-        headers={"Authorization": f"Bearer {owner_token}"},
+    assert accepted.status_code == 200
+    assert accepted.json()["delivery"]["delivery_partner_id"] is not None
+    at_restaurant = await client.patch(
+        f"/api/v1/orders/{order_id}/delivery-status",
+        json={"status": "at_restaurant"},
+        headers=rider_headers,
     )
-    await client.patch(
-        f"/api/v1/orders/{order_id}/status",
-        json={"status": "ready"},
-        headers={"Authorization": f"Bearer {owner_token}"},
-    )
-
-    # 3. Rider workflow to DELIVERED
-    await client.post(
-        f"/api/v1/orders/{order_id}/assign-rider",
-        json={"delivery_partner_id": rider_id},
-        headers={"Authorization": f"Bearer {owner_token}"},
-    )
-    await client.patch(
-        f"/api/v1/orders/{order_id}/status",
-        json={"status": "out_for_delivery"},
-        headers={"Authorization": f"Bearer {rider_token}"},
-    )
-    await client.patch(
+    assert at_restaurant.status_code == 200
+    for order_status in ("preparing", "ready"):
+        response = await client.patch(
+            f"/api/v1/orders/{order_id}/status",
+            json={"status": order_status},
+            headers=owner_headers,
+        )
+        assert response.status_code == 200
+    for delivery_status in ("picked_up", "on_route"):
+        response = await client.patch(
+            f"/api/v1/orders/{order_id}/delivery-status",
+            json={"status": delivery_status},
+            headers=rider_headers,
+        )
+        assert response.status_code == 200
+    delivered = await client.patch(
         f"/api/v1/orders/{order_id}/status",
         json={"status": "delivered"},
-        headers={"Authorization": f"Bearer {rider_token}"},
+        headers=student_headers,
     )
+    assert delivered.status_code == 200, delivered.text
     return order_id
 
 

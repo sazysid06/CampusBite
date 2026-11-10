@@ -38,7 +38,10 @@ class OrderStatus(str, enum.Enum):
 class DeliveryStatus(str, enum.Enum):
     UNASSIGNED = "unassigned"
     ASSIGNED = "assigned"
+    ON_THE_WAY_TO_RESTAURANT = "on_the_way_to_restaurant"
+    AT_RESTAURANT = "at_restaurant"
     PICKED_UP = "picked_up"
+    ON_ROUTE = "on_route"
     COMPLETED = "completed"
     FAILED = "failed"
 

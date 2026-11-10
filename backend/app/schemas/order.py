@@ -52,6 +52,14 @@ class DeliveryStatusUpdate(BaseModel):
     status: DeliveryStatus
 
 
+class RiderAvailabilityUpdate(BaseModel):
+    is_available: bool
+
+
+class RiderAvailabilityResponse(BaseModel):
+    is_available: bool
+
+
 class DeliveryCreate(BaseModel):
     order_id: int
     delivery_partner_id: Optional[int] = None
@@ -115,10 +123,6 @@ class OrderCreate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus
-
-
-class AssignDeliveryPartner(BaseModel):
-    delivery_partner_id: int
 
 
 class OrderResponse(BaseModel):

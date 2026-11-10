@@ -41,64 +41,104 @@ async def test_order_full_lifecycle(client):
     owner_token = await get_token(client, "dhaba_owner@campus.edu", "OwnerPass123!")
     rider_token = await get_token(client, "rider@campus.edu", "RiderPass123!")
     rider_id = get_user_id_from_token(rider_token)
+    rider_headers = {"Authorization": f"Bearer {rider_token}"}
+    student_headers = {"Authorization": f"Bearer {student_token}"}
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
 
-    # 1. Customer places order (PLACED)
+    availability = await client.patch(
+        "/api/v1/orders/rider/availability",
+        json={"is_available": True},
+        headers=rider_headers,
+    )
+    assert availability.status_code == 200
+
     order_id = await place_order(client, student_token)
-
-    # 2. Owner accepts order (ACCEPTED)
     res_accept = await client.patch(
         f"/api/v1/orders/{order_id}/status",
         json={"status": "accepted"},
-        headers={"Authorization": f"Bearer {owner_token}"},
+        headers=owner_headers,
     )
     assert res_accept.status_code == 200
-    assert res_accept.json()["status"] == "accepted"
+    assert res_accept.json()["delivery"]["delivery_partner_id"] == rider_id
 
-    # 3. Owner begins preparing (PREPARING)
-    res_prep = await client.patch(
-        f"/api/v1/orders/{order_id}/status",
-        json={"status": "preparing"},
-        headers={"Authorization": f"Bearer {owner_token}"},
+    at_restaurant = await client.patch(
+        f"/api/v1/orders/{order_id}/delivery-status",
+        json={"status": "at_restaurant"},
+        headers=rider_headers,
     )
-    assert res_prep.status_code == 200
-    assert res_prep.json()["status"] == "preparing"
+    assert at_restaurant.status_code == 200, at_restaurant.text
 
-    # 4. Owner marks ready (READY)
-    res_ready = await client.patch(
-        f"/api/v1/orders/{order_id}/status",
-        json={"status": "ready"},
-        headers={"Authorization": f"Bearer {owner_token}"},
-    )
-    assert res_ready.status_code == 200
-    assert res_ready.json()["status"] == "ready"
+    for order_status in ("preparing", "ready"):
+        response = await client.patch(
+            f"/api/v1/orders/{order_id}/status",
+            json={"status": order_status},
+            headers=owner_headers,
+        )
+        assert response.status_code == 200
 
-    # 5. Owner assigns delivery partner (ASSIGNED)
-    res_assign = await client.post(
-        f"/api/v1/orders/{order_id}/assign-rider",
-        json={"delivery_partner_id": rider_id},
-        headers={"Authorization": f"Bearer {owner_token}"},
-    )
-    assert res_assign.status_code == 200
-    assert res_assign.json()["status"] == "assigned"
-    assert res_assign.json()["delivery"]["delivery_partner_id"] == rider_id
+    for delivery_status in ("picked_up", "on_route"):
+        response = await client.patch(
+            f"/api/v1/orders/{order_id}/delivery-status",
+            json={"status": delivery_status},
+            headers=rider_headers,
+        )
+        assert response.status_code == 200
 
-    # 6. Rider marks out for delivery (OUT_FOR_DELIVERY)
-    res_pickup = await client.patch(
-        f"/api/v1/orders/{order_id}/status",
-        json={"status": "out_for_delivery"},
-        headers={"Authorization": f"Bearer {rider_token}"},
-    )
-    assert res_pickup.status_code == 200
-    assert res_pickup.json()["status"] == "out_for_delivery"
-
-    # 7. Rider marks delivered (DELIVERED)
-    res_deliv = await client.patch(
+    delivered = await client.patch(
         f"/api/v1/orders/{order_id}/status",
         json={"status": "delivered"},
-        headers={"Authorization": f"Bearer {rider_token}"},
+        headers=student_headers,
     )
-    assert res_deliv.status_code == 200
-    assert res_deliv.json()["status"] == "delivered"
+    assert delivered.status_code == 200
+    assert delivered.json()["delivery"]["status"] == "completed"
+
+    availability = await client.get(
+        "/api/v1/orders/rider/availability",
+        headers=rider_headers,
+    )
+    assert availability.json()["is_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_waiting_order_is_assigned_when_rider_becomes_available(client):
+    student_token = await get_token(client, "student@campus.edu", "StudentPass123!")
+    owner_token = await get_token(client, "dhaba_owner@campus.edu", "OwnerPass123!")
+    rider_token = await get_token(client, "rider@campus.edu", "RiderPass123!")
+    rider_headers = {"Authorization": f"Bearer {rider_token}"}
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    student_headers = {"Authorization": f"Bearer {student_token}"}
+
+    offline = await client.patch(
+        "/api/v1/orders/rider/availability",
+        json={"is_available": False},
+        headers=rider_headers,
+    )
+    assert offline.status_code == 200
+    order_id = await place_order(client, student_token)
+    accepted = await client.patch(
+        f"/api/v1/orders/{order_id}/status",
+        json={"status": "accepted"},
+        headers=owner_headers,
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["delivery"]["delivery_partner_id"] is None
+
+    online = await client.patch(
+        "/api/v1/orders/rider/availability",
+        json={"is_available": True},
+        headers=rider_headers,
+    )
+    assert online.status_code == 200
+    assert online.json()["is_available"] is False
+
+    order = await client.get(
+        f"/api/v1/orders/{order_id}",
+        headers=student_headers,
+    )
+    assert order.json()["delivery"]["delivery_partner_id"] == get_user_id_from_token(
+        rider_token
+    )
+    assert order.json()["delivery"]["status"] == "on_the_way_to_restaurant"
 
 
 @pytest.mark.asyncio

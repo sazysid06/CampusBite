@@ -24,6 +24,7 @@ import backend.app.models  # Ensures all models are registered in Base.metadata
 async def setup_test_database():
     """Create all registered database tables before tests run."""
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     await seed_database()
     yield

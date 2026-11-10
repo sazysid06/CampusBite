@@ -1,4 +1,5 @@
 from backend.app.models.user import User, UserRole
+from backend.app.models.rider import RiderAvailability
 from backend.app.models.restaurant import Restaurant, MenuItem
 from backend.app.models.order import (
     Delivery,
@@ -16,6 +17,7 @@ from backend.app.models.order import (
 __all__ = [
     "User",
     "UserRole",
+    "RiderAvailability",
     "Restaurant",
     "MenuItem",
     "Order",

@@ -8,6 +8,15 @@ export const orderService = {
     updateStatus: async (orderId, status) => (
         await api.patch(`/orders/${orderId}/status`, { status })
     ).data,
+    updateDeliveryStatus: async (orderId, status) => (
+        await api.patch(`/orders/${orderId}/delivery-status`, { status })
+    ).data,
+    getRiderAvailability: async () => (
+        await api.get('/orders/rider/availability')
+    ).data,
+    setRiderAvailability: async (isAvailable) => (
+        await api.patch('/orders/rider/availability', { is_available: isAvailable })
+    ).data,
     requestRefund: async (orderId, reason) => (
         await api.post(`/orders/${orderId}/refund-request`, { reason })
     ).data,

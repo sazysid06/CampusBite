@@ -159,7 +159,8 @@ const OwnerDashboard = () => {
                         <OrderCard key={order.id} order={order} restaurantName={restaurant.name}>
                             {nextStatus[order.status] && <button className="button button-primary button-small" onClick={() => updateOrder(order.id, nextStatus[order.status])}>Mark {formatStatus(nextStatus[order.status])}</button>}
                             {['placed', 'accepted'].includes(order.status) && <button className="button button-danger button-small" onClick={() => updateOrder(order.id, 'cancelled')}>Cancel</button>}
-                            {order.status === 'ready' && <span className="muted-note">Ready for rider assignment. The backend does not currently provide a rider directory.</span>}
+                            {order.delivery?.delivery_partner_id && <span className="muted-note">Rider #{order.delivery.delivery_partner_id} · {formatStatus(order.delivery.status)}</span>}
+                            {['accepted', 'preparing', 'ready'].includes(order.status) && !order.delivery?.delivery_partner_id && <span className="muted-note">Waiting for an available rider. The system will assign one automatically.</span>}
                             {order.refund_request && (
                                 <>
                                     <span className="muted-note">

@@ -26,6 +26,11 @@ COPY pytest.ini .
 # Create persistent storage directory for the SQLite database
 RUN mkdir -p /app/data
 
+# Fail the image build if the backend smoke test fails.
+RUN JWT_SECRET_KEY=campusbite-docker-build-smoke-key \
+    DATABASE_URL=sqlite+aiosqlite:////tmp/campusbite-smoke.db \
+    python -m pytest -v tests/test_smoke.py
+
 # Expose FastAPI server port
 EXPOSE 8000
 

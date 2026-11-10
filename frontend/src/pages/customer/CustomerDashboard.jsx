@@ -4,7 +4,7 @@ import { EmptyState, ErrorMessage, LoadingState } from '../../components/common/
 import OrderCard from '../../components/common/OrderCard';
 import { useAuth } from '../../context/useAuth';
 import { orderService } from '../../services/orderService';
-import { formatMoney, getErrorMessage } from '../../utils/formatters';
+import { formatMoney, formatStatus, getErrorMessage } from '../../utils/formatters';
 
 const CustomerDashboard = () => {
     const { user } = useAuth();
@@ -51,6 +51,18 @@ const CustomerDashboard = () => {
             await loadData();
         } catch (requestError) {
             setActionError(getErrorMessage(requestError, 'Could not cancel this order.'));
+        }
+    };
+
+    const confirmDelivery = async (orderId) => {
+        setActionError('');
+        setActionNotice('');
+        try {
+            await orderService.updateStatus(orderId, 'delivered');
+            setActionNotice(`Order #${orderId} marked delivered. Thank you for confirming!`);
+            await loadData();
+        } catch (requestError) {
+            setActionError(getErrorMessage(requestError, 'Could not confirm delivery.'));
         }
     };
 
@@ -110,6 +122,8 @@ const CustomerDashboard = () => {
                 {orders.length ? <div className="order-list">{orders.map((order) => (
                     <OrderCard key={order.id} order={order}>
                         {order.status === 'placed' && <button className="button button-danger button-small" onClick={() => cancelOrder(order.id)}>Cancel order</button>}
+                        {order.status === 'out_for_delivery' && <button className="button button-primary button-small" onClick={() => confirmDelivery(order.id)}>Confirm delivered</button>}
+                        {order.delivery?.status && <span className="muted-note">Rider tracker: {formatStatus(order.delivery.status)}</span>}
                         {order.review && <span className="review-summary">Your review: {order.review.rating}/5</span>}
                         {order.refund_request && <span className="muted-note">Refund request: {order.refund_request.status}{order.refund_request.decision_notes ? ` — ${order.refund_request.decision_notes}` : ''}</span>}
                         {order.status === 'delivered' && !order.refund_request && (

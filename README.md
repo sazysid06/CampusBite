@@ -34,40 +34,125 @@ CampusBite/
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── deps.py                 # Authentication and role dependencies
+│   │   │   ├── deps.py                       # Authentication, DB session, role dependencies
 │   │   │   └── v1/
-│   │   │       ├── auth.py             # Registration, login, current profile
-│   │   │       ├── orders.py           # Orders, workflow, analytics, AI advisor
-│   │   │       ├── recommendations.py  # Gemini menu recommendations
-│   │   │       └── restaurants.py      # Restaurants and menu API
+│   │   │       ├── __init__.py               # API v1 router composition
+│   │   │       ├── auth.py                   # POST /auth/register, POST /auth/login, GET /auth/me
+│   │   │       ├── orders.py                 # Order, rider, refund, review, analytics and advisor endpoints:
+│   │   │       │                             # POST /orders/, GET /orders/me, GET /orders/{order_id}
+│   │   │       │                             # PATCH /orders/{order_id}/status
+│   │   │       │                             # PATCH /orders/{order_id}/delivery-status
+│   │   │       │                             # GET|PATCH /orders/rider/availability
+│   │   │       │                             # POST /orders/{order_id}/refund-request
+│   │   │       │                             # POST /orders/{order_id}/refund-decision
+│   │   │       │                             # POST /orders/{order_id}/review
+│   │   │       │                             # GET /orders/insights/summary
+│   │   │       │                             # GET /orders/restaurant/analytics
+│   │   │       │                             # GET /orders/stale-reminders, POST /orders/advisor
+│   │   │       ├── recommendations.py        # POST /recommendations/
+│   │   │       └── restaurants.py            # POST /restaurants/, GET /restaurants/
+│   │   │                                     # GET /restaurants/{restaurant_id}
+│   │   │                                     # POST /restaurants/{restaurant_id}/items
 │   │   ├── core/
-│   │   │   ├── config.py               # Environment-backed settings
-│   │   │   ├── database.py             # Async database engine and sessions
-│   │   │   └── security.py             # Password hashing and JWT helpers
-│   │   ├── models/                     # User, restaurant, menu, and order models
-│   │   ├── schemas/                    # API request and response schemas
-│   │   ├── services/ai/
-│   │   │   ├── advisor.py              # Gemini menu advisor
-│   │   │   └── order_history_advisor.py # OpenAI/Gemini order-history advisor
-│   │   └── main.py                     # FastAPI app and health endpoint
-│   └── scripts/seed.py                 # Optional demo data
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py                     # Environment-backed settings
+│   │   │   ├── database.py                   # Async SQLAlchemy engine and sessions
+│   │   │   └── security.py                   # Password hashing and JWT helpers
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── order.py                      # Orders, items, deliveries, payments, refunds, reviews
+│   │   │   ├── restaurant.py                 # Restaurants and menu items
+│   │   │   ├── rider.py                      # Rider availability state
+│   │   │   └── user.py                       # User accounts and roles
+│   │   ├── schemas/
+│   │   │   ├── __init__.py
+│   │   │   ├── order.py                      # Order, delivery, rider and lifecycle schemas
+│   │   │   ├── restaurant.py                 # Restaurant and menu schemas
+│   │   │   └── user.py                       # Registration, profile and token schemas
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   └── ai/
+│   │   │       ├── __init__.py
+│   │   │       ├── advisor.py                # Gemini menu recommendation service
+│   │   │       └── order_history_advisor.py  # OpenAI/Gemini order-history advisor
+│   │   └── main.py                           # FastAPI app, router setup and GET /health
+│   └── scripts/
+│       ├── __init__.py
+│       └── seed.py                           # Optional demo accounts, restaurant and menu
 ├── frontend/
 │   ├── src/
-│   │   ├── components/                 # Shared UI and protected routing
-│   │   ├── context/                    # Authentication and cart state
-│   │   ├── pages/                      # Auth, customer, owner, and rider pages
-│   │   └── services/                   # Axios API clients
-│   ├── public/                         # Static assets
-│   ├── package.json
+│   │   ├── assets/
+│   │   │   ├── hero.png
+│   │   │   ├── react.svg
+│   │   │   └── vite.svg
+│   │   ├── components/
+│   │   │   ├── common/
+│   │   │   │   ├── AppShell.jsx             # Shared app layout and navigation
+│   │   │   │   ├── Feedback.jsx              # Loading, empty and error states
+│   │   │   │   └── OrderCard.jsx             # Shared order summary
+│   │   │   └── routing/
+│   │   │       ├── ProtectedRoute.jsx        # Role-protected routes
+│   │   │       └── Unauthorized.jsx           # Unauthorized access page
+│   │   ├── context/
+│   │   │   ├── AuthContext.jsx                # Authentication provider and session restore
+│   │   │   ├── AuthStateContext.js            # Authentication context definition
+│   │   │   ├── CartContext.jsx                # Cart provider and persistence
+│   │   │   ├── CartStateContext.js            # Cart context definition
+│   │   │   ├── useAuth.js                     # Authentication context hook
+│   │   │   └── useCart.js                     # Cart context hook
+│   │   ├── pages/
+│   │   │   ├── auth/
+│   │   │   │   ├── Login.jsx                  # Sign in
+│   │   │   │   └── Register.jsx               # Account registration
+│   │   │   ├── customer/
+│   │   │   │   ├── Cart.jsx                   # Checkout and delivery details
+│   │   │   │   ├── CustomerDashboard.jsx      # Orders, delivery confirmation and insights
+│   │   │   │   ├── RestaurantDetail.jsx      # Restaurant menu and item selection
+│   │   │   │   └── RestaurantList.jsx         # Restaurant discovery
+│   │   │   ├── owner/
+│   │   │   │   └── OwnerDashboard.jsx         # Restaurant, menu and order management
+│   │   │   └── rider/
+│   │   │       └── DeliveryDashboard.jsx      # Availability and delivery progress tracker
+│   │   ├── services/
+│   │   │   ├── api.js                         # Axios client, auth headers and error handling
+│   │   │   ├── authService.js                 # Authentication API calls
+│   │   │   ├── orderService.js                # Order, rider, refund and advisor API calls
+│   │   │   └── restaurantService.js           # Restaurant and menu API calls
+│   │   ├── utils/
+│   │   │   ├── constants.js                   # Shared frontend constants
+│   │   │   └── formatters.js                  # Currency, status and error formatting
+│   │   ├── App.css
+│   │   ├── App.jsx                            # Frontend routes and role-based page mapping
+│   │   ├── index.css
+│   │   └── main.jsx                           # React entry point
+│   ├── public/
+│   │   ├── favicon.svg
+│   │   └── icons.svg
+│   ├── Dockerfile                             # Vite build and Nginx runtime image
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── nginx.conf                             # SPA fallback and backend API proxy
 │   ├── package-lock.json
-│   ├── Dockerfile                      # Vite build + Nginx runtime image
-│   └── nginx.conf                      # SPA fallback and backend API proxy
-├── tests/                              # API lifecycle, operations, and advisor tests
-├── Dockerfile                          # Backend image
-├── docker-compose.yml                  # Backend and frontend services
-├── .env.example                        # Environment variable template
-├── requirements.txt
-└── README.md
+│   ├── package.json
+│   └── vite.config.js
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py                            # Temporary SQLite test database and API client
+│   ├── test_lifecycle.py                      # Order lifecycle and rider assignment tests
+│   ├── test_operations.py                     # Reviews, refunds and analytics tests
+│   ├── test_order_history_advisor.py          # Order advisor behavior tests
+│   └── test_smoke.py                          # Health, restaurant and rider tracker smoke test
+├── .github/
+│   └── workflows/
+│       └── ci.yml                             # Backend tests and frontend checks on push/PR
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── Dockerfile                                 # Backend image; runs smoke test during build
+├── docker-compose.yml                         # Backend and frontend services
+├── pytest.ini
+├── README.md
+└── requirements.txt
 ```
 
 ## Run with Docker Compose

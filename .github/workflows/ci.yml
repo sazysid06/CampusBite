@@ -12,6 +12,9 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      JWT_SECRET_KEY: campusbite-ci-test-only-key
+      DATABASE_URL: sqlite+aiosqlite:////tmp/campusbite-ci.db
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

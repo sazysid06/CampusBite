@@ -18,17 +18,28 @@ const Login = () => {
 
     const redirectByRole = (role) => {
         const origin = location.state?.from?.pathname;
-        if (origin) return origin;
+        const normalizedRole = role?.toLowerCase();
 
-        switch (role) {
-            case ROLES.RESTAURANT_OWNER:
-                return '/owner/dashboard';
-            case ROLES.DELIVERY_PARTNER:
-                return '/rider/dashboard';
-            case ROLES.CUSTOMER:
-            default:
-                return '/restaurants';
-        }
+        const roleDestinations = {
+            [ROLES.CUSTOMER]: {
+                home: '/restaurants',
+                paths: ['/restaurants', '/cart', '/dashboard'],
+            },
+            [ROLES.RESTAURANT_OWNER]: {
+                home: '/owner/dashboard',
+                paths: ['/owner/dashboard'],
+            },
+            [ROLES.DELIVERY_PARTNER]: {
+                home: '/rider/dashboard',
+                paths: ['/rider/dashboard'],
+            },
+        };
+        const destination = roleDestinations[normalizedRole] || roleDestinations[ROLES.CUSTOMER];
+        const hasAccessToOrigin = destination.paths.some(
+            (path) => origin === path || origin?.startsWith(`${path}/`)
+        );
+
+        return hasAccessToOrigin ? origin : destination.home;
     };
 
     const handleSubmit = async (e) => {
@@ -44,6 +55,12 @@ const Login = () => {
         } catch (err) {
             const detail = err.response?.data?.detail;
             let message = 'Invalid email or password. Please try again.';
+
+            if (!err.response) {
+                message = 'Unable to reach the API. Check that the backend is running and the API URL is configured correctly.';
+            } else if (err.response.status >= 500) {
+                message = 'The server could not complete sign-in. Please try again later.';
+            }
 
             if (typeof detail === 'string') {
                 message = detail;

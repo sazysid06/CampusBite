@@ -10,6 +10,7 @@ from sqlalchemy.engine import URL
 
 # The checked-in .env uses the Docker-only /app/data mount.
 TEST_DATABASE_PATH = Path(gettempdir()) / f"campusbite-test-{uuid4().hex}.db"
+os.environ["JWT_SECRET_KEY"] = "campusbite-test-only-key"
 os.environ["DATABASE_URL"] = URL.create(
     "sqlite+aiosqlite", database=str(TEST_DATABASE_PATH)
 ).render_as_string(hide_password=False)

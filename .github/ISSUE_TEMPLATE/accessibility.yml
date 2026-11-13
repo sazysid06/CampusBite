@@ -1,0 +1,30 @@
+name: Accessibility concern
+description: Report a barrier or suggest an accessibility improvement.
+title: "[Accessibility]: "
+labels:
+  - accessibility
+body:
+  - type: textarea
+    id: barrier
+    attributes:
+      label: What barrier did you encounter?
+      description: Describe the page or workflow and what you were trying to do.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and assistive technology
+      description: Include the browser, device, and assistive technology if applicable.
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What would make this more accessible?
+      description: Suggest an improvement, if you have one.
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: Please do not include personal or sensitive information.

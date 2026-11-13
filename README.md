@@ -236,11 +236,7 @@ Set-Location frontend
 npm ci
 ```
 
-Create `frontend/.env.local` with the local backend URL:
-
-```env
-VITE_API_BASE_URL=http://localhost:8000/api/v1
-```
+The Vite development server proxies `/api` requests to `http://localhost:8000`, so keep the frontend API URL relative (`/api/v1`, the default). This is important when opening the frontend through a VS Code tunnel: an absolute `localhost` URL in the browser would refer to the viewer's computer, not the development host. Remove any `VITE_API_BASE_URL` override that points to `localhost`.
 
 Start the development server:
 
@@ -365,6 +361,18 @@ npm run build
 - Keep AI provider keys on the backend; Vite variables are bundled into browser code.
 - Use a unique, strong `JWT_SECRET_KEY` outside local development.
 
+## Community
+
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Accessibility Statement](ACCESSIBILITY.md)
+- [MIT License](LICENSE)
+
+Use the repository's issue templates to report bugs or suggest features. For
+security reports, follow the private reporting instructions in the Security
+Policy rather than opening a public issue.
+
 ## License
 
-See [LICENSE](LICENSE) if present in the repository.
+This project is licensed under the [MIT License](LICENSE).

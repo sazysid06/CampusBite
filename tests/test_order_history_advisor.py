@@ -37,7 +37,7 @@ async def test_order_advisor_sends_context_to_openai(monkeypatch):
 
     class FakeAsyncClient:
         def __init__(self, timeout):
-            assert timeout.connect == 20.0
+            assert timeout.connect == advisor_service._ORDER_ADVISOR_TIMEOUT_SECONDS
 
         async def __aenter__(self):
             return self
@@ -65,7 +65,8 @@ async def test_order_advisor_sends_context_to_openai(monkeypatch):
     assert captured_request["headers"]["Authorization"] == "Bearer test-key"
     messages = captured_request["payload"]["messages"]
     assert '"order_id": 12' in messages[1]["content"]
-    assert "summarize all the listed recent orders" in messages[0]["content"]
+    assert "as a maximum, not a minimum or requirement" in messages[0]["content"]
+    assert "summarize all of them" in messages[0]["content"]
     assert "do not refuse" in messages[0]["content"]
 
 
@@ -91,7 +92,7 @@ async def test_order_advisor_maps_openai_rate_limit(monkeypatch):
 
     class FakeAsyncClient:
         def __init__(self, timeout):
-            assert timeout.connect == 20.0
+            assert timeout.connect == advisor_service._ORDER_ADVISOR_TIMEOUT_SECONDS
 
         async def __aenter__(self):
             return self
@@ -131,6 +132,12 @@ async def test_order_advisor_uses_gemini_when_openai_is_not_configured(monkeypat
             self.aio = type("Async", (), {"models": FakeModels()})()
 
     monkeypatch.setattr(advisor_service.genai, "Client", FakeClient)
+
+    async def fake_wait_for(awaitable, timeout):
+        captured_request["timeout"] = timeout
+        return await awaitable
+
+    monkeypatch.setattr(advisor_service.asyncio, "wait_for", fake_wait_for)
     answer = await answer_order_history_question(
         "Summarize my last five orders.",
         {"recent_orders": [{"order_id": 12}]},
@@ -140,8 +147,99 @@ async def test_order_advisor_uses_gemini_when_openai_is_not_configured(monkeypat
     assert captured_request["model"] == settings.GEMINI_MODEL
     assert "order_id" in captured_request["contents"]
     assert "Summarize my last five orders." in captured_request["contents"]
-    assert "summarize all the listed recent orders" in captured_request["contents"]
+    assert "as a maximum, not a minimum or requirement" in captured_request["contents"]
+    assert "summarize all of them" in captured_request["contents"]
     assert "do not refuse" in captured_request["contents"]
+    assert captured_request["timeout"] == advisor_service._ORDER_ADVISOR_TIMEOUT_SECONDS
+    assert captured_request["timeout"] == 60.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("api_code", "expected_status", "expected_message"),
+    [
+        (400, status.HTTP_502_BAD_GATEWAY, "HTTP 400"),
+        (403, status.HTTP_503_SERVICE_UNAVAILABLE, "API key or access"),
+        (404, status.HTTP_503_SERVICE_UNAVAILABLE, "not found or is unavailable"),
+        (503, status.HTTP_503_SERVICE_UNAVAILABLE, "temporarily unavailable"),
+    ],
+)
+async def test_order_advisor_maps_gemini_api_errors(
+    monkeypatch,
+    api_code,
+    expected_status,
+    expected_message,
+):
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-gemini-key")
+
+    class FakeModels:
+        async def generate_content(self, model, contents, config):
+            raise advisor_service.genai_errors.APIError(
+                code=api_code,
+                response_json={
+                    "error": {
+                        "code": api_code,
+                        "status": "TEST_ERROR",
+                        "message": "provider failure",
+                    }
+                },
+            )
+
+    class FakeClient:
+        def __init__(self, api_key):
+            assert api_key == "test-gemini-key"
+            self.aio = type("Async", (), {"models": FakeModels()})()
+
+    monkeypatch.setattr(advisor_service.genai, "Client", FakeClient)
+
+    with pytest.raises(OrderAdvisorError) as error:
+        await answer_order_history_question("Which meals did I order?", {})
+
+    assert error.value.status_code == expected_status
+    assert expected_message in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_order_summary_uses_available_history_when_gemini_is_unavailable(monkeypatch):
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-gemini-key")
+
+    async def unavailable_provider(_question, _history_context):
+        raise OrderAdvisorError("Gemini is temporarily unavailable.", 503)
+
+    monkeypatch.setattr(advisor_service, "_answer_with_gemini", unavailable_provider)
+    history_context = {
+        "total_orders": 2,
+        "recent_orders": [
+            {
+                "order_id": 41,
+                "restaurant": "Campus Cafe",
+                "status": "delivered",
+                "created_at": "2026-11-12T12:00:00+00:00",
+                "total_inr": 180.0,
+                "items": [{"name": "Masala Dosa", "quantity": 1}],
+            },
+            {
+                "order_id": 39,
+                "restaurant": "Green Bowl",
+                "status": "delivered",
+                "created_at": "2026-11-10T12:00:00+00:00",
+                "total_inr": 220.0,
+                "items": [{"name": "Paneer Bowl", "quantity": 2}],
+            },
+        ],
+    }
+
+    answer, provider = await answer_order_history_question(
+        "Summarize my last five orders.",
+        history_context,
+    )
+
+    assert provider == "local order history"
+    assert "2 recent orders (out of 2 total)" in answer
+    assert "Masala Dosa" in answer
+    assert "Paneer Bowl" in answer
 
 
 @pytest.mark.asyncio

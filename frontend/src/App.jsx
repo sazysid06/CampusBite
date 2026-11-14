@@ -8,6 +8,7 @@ import AppShell from './components/common/AppShell';
 import { useAuth } from './context/useAuth';
 import { LoadingState } from './components/common/Feedback';
 
+import LandingPage from './pages/LandingPage';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import RestaurantList from './pages/customer/RestaurantList';
@@ -20,7 +21,7 @@ import DeliveryDashboard from './pages/rider/DeliveryDashboard';
 const HomeRedirect = () => {
   const { isAuthenticated, loading, user } = useAuth();
   if (loading) return <LoadingState label="Loading your account..." />;
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) return <LandingPage />;
   const destination = {
     [ROLES.CUSTOMER]: '/restaurants',
     [ROLES.RESTAURANT_OWNER]: '/owner/dashboard',

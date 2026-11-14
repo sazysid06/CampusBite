@@ -63,7 +63,10 @@ async def test_order_advisor_sends_context_to_openai(monkeypatch):
     assert answer == ("You ordered two meals.", "openai")
     assert captured_request["url"] == "https://api.openai.com/v1/chat/completions"
     assert captured_request["headers"]["Authorization"] == "Bearer test-key"
-    assert captured_request["payload"]["messages"][1]["content"].find('"order_id": 12') >= 0
+    messages = captured_request["payload"]["messages"]
+    assert '"order_id": 12' in messages[1]["content"]
+    assert "summarize all the listed recent orders" in messages[0]["content"]
+    assert "do not refuse" in messages[0]["content"]
 
 
 @pytest.mark.asyncio
@@ -137,6 +140,8 @@ async def test_order_advisor_uses_gemini_when_openai_is_not_configured(monkeypat
     assert captured_request["model"] == settings.GEMINI_MODEL
     assert "order_id" in captured_request["contents"]
     assert "Summarize my last five orders." in captured_request["contents"]
+    assert "summarize all the listed recent orders" in captured_request["contents"]
+    assert "do not refuse" in captured_request["contents"]
 
 
 @pytest.mark.asyncio

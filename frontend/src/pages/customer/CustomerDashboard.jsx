@@ -4,6 +4,7 @@ import { EmptyState, ErrorMessage, LoadingState } from '../../components/common/
 import OrderCard from '../../components/common/OrderCard';
 import { useAuth } from '../../context/useAuth';
 import { orderService } from '../../services/orderService';
+import { recommendationService } from '../../services/recommendationService';
 import { formatMoney, formatStatus, getErrorMessage } from '../../utils/formatters';
 
 const CustomerDashboard = () => {
@@ -17,6 +18,10 @@ const CustomerDashboard = () => {
     const [recommendation, setRecommendation] = useState(null);
     const [recommendationError, setRecommendationError] = useState('');
     const [asking, setAsking] = useState(false);
+    const [foodQuery, setFoodQuery] = useState('');
+    const [foodRecommendation, setFoodRecommendation] = useState(null);
+    const [foodRecommendationError, setFoodRecommendationError] = useState('');
+    const [askingFoodAdvisor, setAskingFoodAdvisor] = useState(false);
     const [actionError, setActionError] = useState('');
     const [actionNotice, setActionNotice] = useState('');
     const [refundReasons, setRefundReasons] = useState({});
@@ -97,6 +102,22 @@ const CustomerDashboard = () => {
         }
     };
 
+    const askFoodAdvisor = async (event) => {
+        event.preventDefault();
+        setAskingFoodAdvisor(true);
+        setFoodRecommendationError('');
+        setFoodRecommendation(null);
+        try {
+            setFoodRecommendation(await recommendationService.recommend(foodQuery));
+        } catch (requestError) {
+            setFoodRecommendationError(
+                getErrorMessage(requestError, 'Food recommendations are unavailable right now.'),
+            );
+        } finally {
+            setAskingFoodAdvisor(false);
+        }
+    };
+
     if (loading) return <LoadingState label="Loading your orders and insights..." />;
 
     return (
@@ -153,6 +174,56 @@ const CustomerDashboard = () => {
                 ))}</div> : <EmptyState title="No orders yet" detail="Your next campus favorite is waiting." action={<Link to="/restaurants" className="button button-primary">Browse restaurants</Link>} />}
             </section>
             <section className="advisor-panel">
+                <div className="advisor-intro"><span className="advisor-sparkle">✦</span><span className="eyebrow">AI FOOD RECOMMENDATIONS</span><h2>Find your next campus favorite.</h2><p>Tell us what you’re craving and get suggestions from currently available menus.</p></div>
+                <div className="advisor-body">
+                    <p className="advisor-recommendation">Try a cuisine, dietary preference, or budget, such as “vegetarian under 150”.</p>
+                    <form className="advisor-form" onSubmit={askFoodAdvisor}>
+                        <label className="sr-only" htmlFor="food-recommendation-query">What are you craving?</label>
+                        <input
+                            id="food-recommendation-query"
+                            required
+                            minLength={3}
+                            maxLength={300}
+                            value={foodQuery}
+                            onChange={(event) => setFoodQuery(event.target.value)}
+                            placeholder="Vegetarian, under 150, something spicy..."
+                        />
+                        <button className="button button-dark" disabled={askingFoodAdvisor}>
+                            {askingFoodAdvisor ? 'Finding matches...' : 'Get recommendations'}
+                        </button>
+                    </form>
+                    <ErrorMessage message={foodRecommendationError} />
+                    {foodRecommendation && (
+                        <div className="recommendation-result" role="status">
+                            <p>{foodRecommendation.explanation}</p>
+                            {foodRecommendation.recommended_items?.length > 0 && (
+                                <div className="menu-list">
+                                    {foodRecommendation.recommended_items.map((item) => (
+                                        <article className="menu-item" key={item.id}>
+                                            <div className="menu-item-icon">{item.name.slice(0, 1).toUpperCase()}</div>
+                                            <div className="menu-item-copy">
+                                                <span className="eyebrow">{item.category}</span>
+                                                <h3>{item.name}</h3>
+                                                <p>{item.description || 'Prepared fresh when you order.'}</p>
+                                            </div>
+                                            <div className="menu-item-action">
+                                                <strong>{formatMoney(item.price)}</strong>
+                                                <Link
+                                                    className="button button-quiet button-small"
+                                                    to={`/restaurants/${item.restaurant_id}`}
+                                                >
+                                                    View menu
+                                                </Link>
+                                            </div>
+                                        </article>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </section>
+            <section className="advisor-panel">
                 <div className="advisor-intro"><span className="advisor-sparkle">✦</span><span className="eyebrow">YOUR ORDER HISTORY, EXPLAINED</span><h2>Ask your CampusBite advisor.</h2><p>Get answers based on your own orders. Your history stays private to your account.</p></div>
                 <div className="advisor-body">
                     <p className="advisor-recommendation">Try asking about recent orders, delivery status, this week’s spending, or your most ordered dishes.</p>
@@ -169,8 +240,8 @@ const CustomerDashboard = () => {
                         ))}
                     </div>
                     <form className="advisor-form" onSubmit={askAdvisor}>
-                        <label className="sr-only" htmlFor="food-query">What are you craving?</label>
-                        <input id="food-query" required minLength={3} maxLength={1000} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask a question about your orders..." />
+                        <label className="sr-only" htmlFor="order-history-question">What would you like to know about your orders?</label>
+                        <input id="order-history-question" required minLength={3} maxLength={1000} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask a question about your orders..." />
                         <button className="button button-dark" disabled={asking}>{asking ? 'Checking your history...' : 'Ask advisor'}</button>
                     </form>
                     <ErrorMessage message={recommendationError} />

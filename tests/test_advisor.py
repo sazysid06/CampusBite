@@ -64,7 +64,7 @@ async def test_food_advisor_sends_menu_and_returns_gemini_json(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_food_advisor_uses_two_item_fallback_on_timeout(monkeypatch):
+async def test_food_advisor_returns_unavailable_result_on_timeout(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
     menu = [{"id": 1}, {"id": 2}, {"id": 3}]
 
@@ -86,15 +86,15 @@ async def test_food_advisor_uses_two_item_fallback_on_timeout(monkeypatch):
 
     result = await advisor.GeminiFoodAdvisor().get_recommendation("Anything", menu)
 
-    assert result["recommended_item_ids"] == [1, 2]
-    assert "popular campus favorites" in result["explanation"]
+    assert result == {
+        "recommended_item_ids": [],
+        "explanation": advisor._UNAVAILABLE_EXPLANATION,
+    }
 
 
 @pytest.mark.asyncio
-async def test_food_advisor_uses_fallback_when_gemini_response_is_invalid(monkeypatch):
+async def test_food_advisor_returns_unavailable_result_for_invalid_json(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
-    menu = [{"id": 7}]
-
     class FakeModels:
         async def generate_content(self, **_kwargs):
             return type("Response", (), {"text": "not valid JSON"})()
@@ -105,16 +105,19 @@ async def test_food_advisor_uses_fallback_when_gemini_response_is_invalid(monkey
 
     monkeypatch.setattr(advisor.genai, "Client", FakeClient)
 
-    result = await advisor.GeminiFoodAdvisor().get_recommendation("Anything", menu)
+    result = await advisor.GeminiFoodAdvisor().get_recommendation(
+        "Anything",
+        [{"id": 7}],
+    )
 
     assert result == {
-        "recommended_item_ids": [7],
-        "explanation": "Here are popular suggestions while our AI updates.",
+        "recommended_item_ids": [],
+        "explanation": advisor._UNAVAILABLE_EXPLANATION,
     }
 
 
 @pytest.mark.asyncio
-async def test_food_advisor_uses_fallback_when_gemini_json_has_invalid_schema(monkeypatch):
+async def test_food_advisor_returns_unavailable_result_for_invalid_schema(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
 
     class FakeModels:
@@ -137,9 +140,58 @@ async def test_food_advisor_uses_fallback_when_gemini_json_has_invalid_schema(mo
     )
 
     assert result == {
-        "recommended_item_ids": [7],
-        "explanation": "Here are popular suggestions while our AI updates.",
+        "recommended_item_ids": [],
+        "explanation": advisor._UNAVAILABLE_EXPLANATION,
     }
+
+
+@pytest.mark.asyncio
+async def test_food_advisor_returns_unavailable_result_on_gemini_api_error(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+
+    class FakeModels:
+        async def generate_content(self, **_kwargs):
+            raise advisor.genai_errors.APIError(
+                code=503,
+                response_json={
+                    "error": {
+                        "code": 503,
+                        "status": "UNAVAILABLE",
+                        "message": "provider failure",
+                    }
+                },
+            )
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.aio = type("Async", (), {"models": FakeModels()})()
+
+    monkeypatch.setattr(advisor.genai, "Client", FakeClient)
+
+    result = await advisor.GeminiFoodAdvisor().get_recommendation("Anything", [])
+
+    assert result == {
+        "recommended_item_ids": [],
+        "explanation": advisor._UNAVAILABLE_EXPLANATION,
+    }
+
+
+@pytest.mark.asyncio
+async def test_food_advisor_does_not_hide_unexpected_errors(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+
+    class FakeModels:
+        async def generate_content(self, **_kwargs):
+            raise RuntimeError("unexpected programming error")
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.aio = type("Async", (), {"models": FakeModels()})()
+
+    monkeypatch.setattr(advisor.genai, "Client", FakeClient)
+
+    with pytest.raises(RuntimeError, match="unexpected programming error"):
+        await advisor.GeminiFoodAdvisor().get_recommendation("Anything", [])
 
 
 @pytest.mark.asyncio

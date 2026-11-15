@@ -1,10 +1,21 @@
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List
+
+import httpx
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from backend.app.core.config import settings
+
+
+logger = logging.getLogger(__name__)
+_REQUEST_TIMEOUT_SECONDS = 15.0
+_UNAVAILABLE_EXPLANATION = (
+    "AI recommendations are temporarily unavailable. Please try again later."
+)
 
 
 class GeminiFoodAdvisor:
@@ -55,7 +66,7 @@ Respond with valid JSON using this exact schema:
                         temperature=0.2,
                     ),
                 ),
-                timeout=15.0,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
             )
 
             raw_text = response.text or "{}"
@@ -68,24 +79,34 @@ Respond with valid JSON using this exact schema:
                     for item_id in result["recommended_item_ids"]
                 )
                 or not isinstance(result.get("explanation"), str)
+                or not result["explanation"].strip()
             ):
                 raise ValueError("Gemini returned a response with an invalid schema.")
             return result
 
         except asyncio.TimeoutError:
-            print("[ERROR] Gemini API request timed out after 15 seconds.")
-            # Fallback heuristic: pick first 2 items so the user request never fails
-            fallback_ids = [item["id"] for item in available_menu[:2]]
+            logger.warning(
+                "Gemini recommendation request timed out after %.1f seconds.",
+                _REQUEST_TIMEOUT_SECONDS,
+            )
             return {
-                "recommended_item_ids": fallback_ids,
-                "explanation": "Here are our most popular campus favorites matching your request.",
+                "recommended_item_ids": [],
+                "explanation": _UNAVAILABLE_EXPLANATION,
             }
-        except Exception as e:
-            print(f"[ERROR] Gemini recommendation error: {e}")
-            fallback_ids = [item["id"] for item in available_menu[:2]]
+        except (genai_errors.APIError, httpx.RequestError) as error:
+            logger.warning("Gemini recommendation request failed: %s", error)
             return {
-                "recommended_item_ids": fallback_ids,
-                "explanation": "Here are popular suggestions while our AI updates.",
+                "recommended_item_ids": [],
+                "explanation": _UNAVAILABLE_EXPLANATION,
+            }
+        except (ValueError, TypeError) as error:
+            logger.warning(
+                "Gemini returned an invalid recommendation response: %s",
+                error,
+            )
+            return {
+                "recommended_item_ids": [],
+                "explanation": _UNAVAILABLE_EXPLANATION,
             }
 
 

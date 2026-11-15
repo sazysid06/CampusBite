@@ -59,7 +59,18 @@ Respond with valid JSON using this exact schema:
             )
 
             raw_text = response.text or "{}"
-            return json.loads(raw_text)
+            result = json.loads(raw_text)
+            if (
+                not isinstance(result, dict)
+                or not isinstance(result.get("recommended_item_ids"), list)
+                or any(
+                    type(item_id) is not int
+                    for item_id in result["recommended_item_ids"]
+                )
+                or not isinstance(result.get("explanation"), str)
+            ):
+                raise ValueError("Gemini returned a response with an invalid schema.")
+            return result
 
         except asyncio.TimeoutError:
             print("[ERROR] Gemini API request timed out after 15 seconds.")
